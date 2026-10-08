@@ -51,16 +51,40 @@ Color ColorFromHsv(float h, float s, float v, uint32_t alpha) {
 }
 
 // Draws a light/dark checkerboard so a translucent swatch reads as translucent. The cells are cut to `r` themselves,
-// so no clip rect (and no extra draw command) is needed.
-void DrawChecker(DrawList& dl, const Rect& r, float rounding) {
-    dl.AddRectFilled(r, Rgba(130, 130, 130), rounding);
-    const float cell = std::max(4.0f, r.Height() * 0.25f);
+// so no clip rect (and no extra draw command) is needed; cells that would poke out of the rounded corners are left out.
+void DrawChecker(DrawList& dl, const Rect& r, const CornerRadii& radii) {
+    dl.AddRectFilled(r, Rgba(130, 130, 130), radii);
+    const float cell = std::max(4.0f, std::floor(r.Height() * 0.25f));
     bool row = false;
     for (float y = r.min.y; y < r.max.y; y += cell, row = !row) {
         for (float x = r.min.x + (row ? cell : 0.0f); x < r.max.x; x += cell * 2.0f) {
-            dl.AddRectFilled(Rect(x, y, std::min(x + cell, r.max.x), std::min(y + cell, r.max.y)), Rgba(90, 90, 90));
+            const Rect c(x, y, std::min(x + cell, r.max.x), std::min(y + cell, r.max.y));
+            const bool top = c.min.y < r.min.y + 1.0f, bottom = c.max.y > r.max.y - 1.0f;
+            const bool left = c.min.x < r.min.x + 1.0f, right = c.max.x > r.max.x - 1.0f;
+            if ((top && left && radii.tl > 1.0f) || (top && right && radii.tr > 1.0f) ||
+                (bottom && right && radii.br > 1.0f) || (bottom && left && radii.bl > 1.0f)) {
+                continue;
+            }
+            dl.AddRectFilled(c, Rgba(90, 90, 90));
         }
     }
+}
+
+// A swatch: the opaque color, or (translucent colors) the opaque color on the left and the translucent one over a
+// checkerboard on the right.
+void DrawSwatch(UiState& g, const Rect& bb, Color color, float rounding, bool showAlpha) {
+    DrawList& dl = *g.current->dl;
+    const Color opaque = WithAlpha(color, uint32_t(255.0f * g.alpha + 0.5f));
+    if (!showAlpha || ColorAlpha(color) == 255) {
+        dl.AddRectFilled(bb, opaque, rounding);
+        return;
+    }
+    const float mid = std::floor(bb.Center().x);
+    dl.AddRectFilled(Rect(bb.min.x, bb.min.y, mid, bb.max.y), opaque, CornerRadii(rounding, 0.0f, 0.0f, rounding));
+    const Rect right(mid, bb.min.y, bb.max.x, bb.max.y);
+    const CornerRadii radii(0.0f, rounding, rounding, 0.0f);
+    DrawChecker(dl, right, radii);
+    dl.AddRectFilled(right, ScaleAlpha(color, g.alpha), radii);
 }
 
 } // namespace
@@ -78,18 +102,13 @@ bool Ui::ColorButton(std::string_view strId, Color color, Vec2 sizeArg, uint32_t
     bool hovered, held;
     const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held);
     const float rounding = std::min(g.style.frameRounding, size.y * 0.5f);
-    const bool hasAlpha = !(flags & ColorEditFlags::NoAlpha) && ColorAlpha(color) < 255;
-    if (hasAlpha) {
-        DrawChecker(*w->dl, bb, rounding);
-        w->dl->AddRectFilled(bb, ScaleAlpha(color, g.alpha), rounding);
-    } else {
-        w->dl->AddRectFilled(bb, WithAlpha(ScaleAlpha(WithAlpha(color, 255), g.alpha), 255), rounding);
-    }
-    w->dl->AddRect(bb, StyleColor(g, UiColor::Border, hovered ? 1.5f : 1.0f), rounding, 1.0f);
+    if (hovered) RenderGlow(g, bb, rounding, 0.6f);
+    DrawSwatch(g, bb, color, rounding, !(flags & ColorEditFlags::NoAlpha));
+    w->dl->AddRect(bb, hovered ? StyleColor(g, UiColor::Text, 0.8f) : StyleColor(g, UiColor::Border), rounding, 1.0f);
     return pressed;
 }
 
-bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags) {
+bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, const Color* original) {
     UiState& g = *m;
     Window* w = g.current;
     if (w->skipItems) return false;
@@ -120,7 +139,16 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags) {
     const Rect sv(origin, origin + Vec2(svSize, svSize));
     const Rect hue(sv.max.x + spacing, origin.y, sv.max.x + spacing + barW, origin.y + svSize);
     const Rect alphaBar(hue.max.x + spacing, origin.y, hue.max.x + spacing + barW, origin.y + svSize);
-    const Rect block(origin, {hasAlpha ? alphaBar.max.x : hue.max.x, origin.y + svSize});
+    Rect block(origin, {hasAlpha ? alphaBar.max.x : hue.max.x, origin.y + svSize});
+    // "Current" and "Original" swatches in a column beside the bars.
+    const bool sidePreview = !(flags & ColorEditFlags::NoSidePreview);
+    Rect side;
+    if (sidePreview) {
+        const float sideW = std::floor(std::max(g.fontSize * 3.4f, TextSize(g, "Original").x));
+        side = Rect(block.max.x + style.itemInnerSpacing.x * 2.0f, origin.y,
+                    block.max.x + style.itemInnerSpacing.x * 2.0f + sideW, origin.y + svSize);
+        block.max.x = side.max.x;
+    }
     ItemSize(g, block.Size());
     const bool added = ItemAdd(g, block, id);
 
@@ -173,6 +201,29 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags) {
         w->lastItemStatus |= kItemEdited;
     }
 
+    // Side preview: the current color, and the original one (clicking it restores it).
+    const float lineH = TextLineHeight(g);
+    const float swatchH = std::floor(std::min(g.fontSize * 2.6f, (side.Height() - lineH * 2.0f - style.itemInnerSpacing.y * 3.0f) * 0.5f));
+    const Rect currentSwatch(side.min.x, side.min.y + lineH + style.itemInnerSpacing.y, side.max.x,
+                             side.min.y + lineH + style.itemInnerSpacing.y + swatchH);
+    const Rect originalSwatch(side.min.x, currentSwatch.max.y + style.itemInnerSpacing.y * 2.0f + lineH, side.max.x,
+                              currentSwatch.max.y + style.itemInnerSpacing.y * 2.0f + lineH + swatchH);
+    bool originalHovered = false;
+    if (added && sidePreview && original && swatchH > 4.0f) {
+        bool held;
+        if (ButtonBehavior(g, originalSwatch, HashStr("#original", id), &originalHovered, &held) && *color != *original) {
+            *color = *original;
+            RgbToHsv(float(*color & 0xFF) / 255.0f, float((*color >> 8) & 0xFF) / 255.0f,
+                     float((*color >> 16) & 0xFF) / 255.0f, g.colorPickerHue, g.colorPickerSat, g.colorPickerVal);
+            H = g.colorPickerHue;
+            S = g.colorPickerSat;
+            V = g.colorPickerVal;
+            changed = true;
+            w->lastItemStatus |= kItemEdited;
+        }
+        if (originalHovered) SetTooltip("Click to restore the original color");
+    }
+
     // ---- Draw
     if (added) {
         DrawList& dl = *w->dl;
@@ -202,19 +253,39 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags) {
             dl.AddRectFilled(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::White);
             dl.AddRect(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::Black, 0.0f, 1.0f);
         }
-    }
-
-    // ---- Numeric inputs below the picker.
-    if (!(flags & ColorEditFlags::NoInputs)) {
-        ColorEdit4(label, color, flags | ColorEditFlags::NoPicker);
-    } else if (!(flags & ColorEditFlags::NoLabel)) {
-        const std::string_view text = VisibleText(label);
-        if (!text.empty()) {
-            SameLine();
-            Text(text);
+        if (sidePreview && swatchH > 4.0f) {
+            const float sr = std::min(style.frameRounding, swatchH * 0.5f);
+            const Color textColor = StyleColor(g, UiColor::TextDisabled);
+            RenderText(g, side.min, "Current", textColor);
+            DrawSwatch(g, currentSwatch, *color, sr, hasAlpha);
+            dl.AddRect(currentSwatch, StyleColor(g, UiColor::Border), sr, 1.0f);
+            if (original) {
+                RenderText(g, {side.min.x, currentSwatch.max.y + style.itemInnerSpacing.y}, "Original", textColor);
+                DrawSwatch(g, originalSwatch, *original, sr, hasAlpha);
+                dl.AddRect(originalSwatch, originalHovered ? StyleColor(g, UiColor::Text, 0.8f) : StyleColor(g, UiColor::Border),
+                           sr, 1.0f);
+            }
         }
     }
-    return changed || IsItemEdited();
+
+    // ---- RGBA and hex boxes below the picker, as wide as it.
+    if (!(flags & ColorEditFlags::NoInputs)) {
+        const float fullW = block.Width();
+        const uint32_t rowFlags = (flags & (ColorEditFlags::NoAlpha | ColorEditFlags::NoLabel)) | ColorEditFlags::NoPicker |
+                                  ColorEditFlags::NoSwatch;
+        PushID(label);
+        SetNextItemWidth(fullW);
+        if (ColorEdit4("##rgba", color, rowFlags | ColorEditFlags::NoLabel)) changed = true;
+        SetNextItemWidth(fullW);
+        if (ColorEdit4("##hex", color, rowFlags | ColorEditFlags::NoLabel | ColorEditFlags::DisplayHex)) changed = true;
+        PopID();
+    }
+    if (!(flags & ColorEditFlags::NoLabel)) {
+        const std::string_view text = VisibleText(label);
+        if (!text.empty()) Text(text);
+    }
+    if (changed) w->lastItemStatus |= kItemEdited;
+    return changed;
 }
 
 bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
@@ -231,7 +302,11 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
     if (showInputs) {
         const int components = hasAlpha ? 4 : 3;
         const float full = ui_detail::CalcItemWidth(g);
-        const float each = std::floor((full - g.style.itemInnerSpacing.x * float(components)) / float(components));
+        // Without a swatch the boxes fill the width exactly (the last one takes the rounding remainder).
+        const bool noSwatch = (flags & ColorEditFlags::NoSwatch) != 0;
+        const float spacing = g.style.itemInnerSpacing.x;
+        const float each = std::floor((full - spacing * float(noSwatch ? components - 1 : components)) / float(components));
+        const float last = noSwatch ? full - (each + spacing) * float(components - 1) : each;
         if (flags & ColorEditFlags::DisplayHex) {
             char hex[16];
             if (hasAlpha) std::snprintf(hex, sizeof(hex), "#%02X%02X%02X%02X", *color & 0xFF, (*color >> 8) & 0xFF,
@@ -266,8 +341,8 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
                            int(ColorAlpha(*color))};
             static const char* const names[4] = {"##R", "##G", "##B", "##A"};
             for (int i = 0; i < components; ++i) {
-                if (i > 0) SameLine(0.0f, g.style.itemInnerSpacing.x);
-                SetNextItemWidth(each);
+                if (i > 0) SameLine(0.0f, spacing);
+                SetNextItemWidth(i + 1 < components ? each : last);
                 if (DragInt(names[i], &comp[i], 0.5f, 0, 255)) changed = true;
             }
             if (changed) *color = Rgba(uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]),
@@ -275,20 +350,50 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
         }
     }
 
-    // Swatch that opens a picker popup.
-    if (showInputs) SameLine(0.0f, g.style.itemInnerSpacing.x);
-    if (ColorButton("##swatch", *color, {FrameHeight(g), FrameHeight(g)}, flags) &&
-        !(flags & ColorEditFlags::NoPicker)) {
-        OpenPopup("##picker");
+    // The swatch: a button that opens the picker in a popup.
+    Rect swatch;
+    if (!(flags & ColorEditFlags::NoSwatch)) {
+        if (showInputs) SameLine(0.0f, g.style.itemInnerSpacing.x);
+        const float h = FrameHeight(g);
+        const bool clicked = ColorButton("##swatch", *color, {showInputs ? h : std::floor(h * 1.6f), h}, flags);
+        swatch = w->lastItemRect;
+        if (clicked && !(flags & ColorEditFlags::NoPicker)) {
+            g.colorPickerOriginal = *color;
+            OpenPopup("##picker");
+        }
+        if (!(flags & ColorEditFlags::NoTooltip) && IsItemHovered() && !IsPopupOpen("##picker")) {
+            BeginTooltip();
+            if (!text.empty()) Text(text);
+            ColorButton("##tip", *color, {g.fontSize * 3.0f, g.fontSize * 3.0f}, flags & ColorEditFlags::NoAlpha);
+            SameLine();
+            const Color c = *color;
+            TextF("#%02X%02X%02X%02X\nR %u  G %u  B %u  A %u", c & 0xFFu, (c >> 8) & 0xFFu, (c >> 16) & 0xFFu, c >> 24,
+                  c & 0xFFu, (c >> 8) & 0xFFu, (c >> 16) & 0xFFu, c >> 24);
+            EndTooltip();
+        }
     }
     if (!(flags & ColorEditFlags::NoLabel) && !text.empty()) {
         SameLine(0.0f, g.style.itemInnerSpacing.x);
         AlignTextToFramePadding();
         Text(text);
     }
+    if (swatch.Width() > 0.0f && IsPopupOpen("##picker")) {
+        // Open below the swatch (above it when there is no room), like a combo box, rather than at the mouse.
+        g.nextWindow.hasPos = true;
+        g.nextWindow.pos = {swatch.min.x, swatch.max.y + g.style.itemInnerSpacing.y};
+        g.nextWindow.posCond = Cond::Appearing;
+        g.nextWindow.pivot = {};
+        g.nextWindow.hasAnchor = true;
+        g.nextWindow.anchor = swatch;
+    }
     if (BeginPopup("##picker")) {
-        SetNextItemWidth(g.fontSize * 12.0f);
-        if (ColorPicker4("##pick", color, (flags & ColorEditFlags::NoAlpha) | ColorEditFlags::DisplayHex)) {
+        if (!text.empty()) {
+            TextDisabled(text);
+            Separator();
+        }
+        SetNextItemWidth(std::floor(g.fontSize * 11.0f));
+        if (ColorPicker4("##pick", color, (flags & ColorEditFlags::NoAlpha) | ColorEditFlags::NoLabel,
+                         &g.colorPickerOriginal)) {
             changed = true;
         }
         EndPopup();

@@ -24,6 +24,9 @@ that already has a device and a swap chain.
   and outlines, drop shadows and glow cost no extra geometry.
 - **A complete, familiar UI.** If you have used Dear ImGui, you already know the API: windows, menus, tables, color
   pickers, text input, plots, popups, themes and more.
+- **It doesn't have to look like Dear ImGui.** Nine color themes and six widget styles combine freely: glowing neon,
+  soft, flat, retro, glass or classic. The sample menu changes them live, along with fonts (including a Minecraft-style
+  pixel font), every color and an animated background. [See them.](#make-it-look-like-your-game)
 - **Survives what games do.** Resizes, fullscreen switches, device loss, new devices, and HDR back buffers (sRGB, scRGB
   and HDR10, detected automatically) are all handled.
 - **Nothing extra to ship.** Static libraries with stb_truetype and msdfgen compiled in, and shaders compiled at build
@@ -36,7 +39,7 @@ that already has a device and a swap chain.
 **Widgets.** Every widget is in the sample's widget gallery: color editing and pickers, sortable and resizable tables
 (with a 10,000-row list that lays out only the visible rows), toggles, vector sliders, spinners and notifications.
 
-![The widget gallery on its Color, Tables and Extras tabs](docs/images/gallery.png)
+![The widget gallery three ways: the color picker popup in Obsidian, tables in Glass and Dracula, and glowing Neon toggles in Cyberpunk](docs/images/gallery.png)
 
 **Shapes and text.** Rounded rects with per-corner radii, gradients, shadows and glow, circles, arcs, polylines, Bézier
 curves, filled polygons, images and clipping, all anti-aliased in the pixel shader. Text stays sharp from 10 px up to
@@ -52,6 +55,77 @@ billboarded labels at world positions. Lines are clipped at the near plane, so g
 across the screen.
 
 ![Wireframe boxes, spheres and labels drawn in world space over a grid](docs/images/debug3d.png)
+
+## Make it look like your game
+
+![The same mod menu in six styles, each with a theme, font and animated background to match](docs/images/styles.png)
+
+drizzy keeps a UI's **colors** (its theme) apart from its **shapes and effects** (its style), so any theme works with
+any style:
+
+```cpp
+ui.Style().ApplyTheme(drizzy::UiTheme::Cyberpunk);  // colors only
+ui.Style().ApplyLook(drizzy::UiLook::Neon);         // shapes, sizes and effects only
+```
+
+| Style (`UiLook`) | What it looks like |
+|---|---|
+| Classic | Filled frames, block sliders, check marks and tabs: the Dear ImGui look, and the default. |
+| Soft | Large radii, rail sliders with shadowed knobs, filled checkboxes, pill tabs and a borderless title. |
+| Neon | Outlined widgets that glow when they are on or focused: toggles, checkboxes, sliders, tabs and the window edge. |
+| Flat | Underlined text fields, thin Material-style toggles and sliders, square corners and no chrome. |
+| Retro | Square and outlined, segmented sliders and progress bars, a solid title bar and hard offset shadows. |
+| Glass | Translucent gradients with a light top edge, sliders that fill up, and pill tabs. |
+
+**Themes** (`UiTheme`): Dark, Light, Obsidian, Cyberpunk, Nord, Emerald, Crimson, Dracula and Sakura. For a theme of your
+own, give `UiStyle::ApplyPalette` a handful of colors (background, widgets, text, accent, glow, border) and every UI
+color is derived from them.
+
+![Every theme in the Soft style](docs/images/themes.png)
+
+**Mix and match.** A style is a set of plain fields in `UiStyle`, so every part of it can change on its own: the shape of
+text fields (filled, outline, underline), buttons, sliders (block, rail, fill, segments), checkboxes, toggles, tabs and
+title bars, and the glow, gradient, bevel, knob shadow and hard shadow effects. They load and save with the rest of a
+text theme (`LoadTheme` / `SaveTheme`), which can also start from a built-in one with `theme = Nord` and `look = Neon`.
+
+```cpp
+drizzy::UiStyle& style = ui.Style();
+style.ApplyLook(drizzy::UiLook::Soft);
+style.sliderShape = drizzy::SliderShape::Segments;  // Soft, with segmented sliders
+style.glowSize = 8.0f;                               // and a glow on whatever is switched on
+```
+
+The Classic style costs what drizzy always has: the benchmark's mod menu draws the same prims in the same time. Effects
+add prims only where they're drawn: a glow is one soft-shadow prim.
+
+**Color pickers** work like Dear ImGui's: a color button opens the picker in a popup, with a saturation/value square,
+hue and alpha bars, "Current" and "Original" swatches (click Original to undo), and RGBA and hex boxes. Hovering the
+button shows the color's values. `ColorEdit4` with `ColorEditFlags::NoInputs` is just the button and its label.
+
+### Customize it from the menu
+
+The sample menu (the sandbox's gallery scene and the overlay DLL) has a **Customize** tab that changes all of this while
+it runs: the theme, the style, the font, a few quick colors that recolor everything, any single UI color, each shape and
+effect, and the animated background behind the menu. **View** in the menu bar switches theme, style, font and background
+in two clicks.
+
+<p>
+  <img src="docs/images/fonts.png" alt="The Customize tab with the font menu open, each font shown in its own face" width="49%">
+  <img src="docs/images/color_picker.png" alt="A color button's picker popup in the Obsidian theme" width="49%">
+</p>
+
+**Fonts.** Besides Inter, the samples bundle six fonts, all under the SIL Open Font License: Monocraft (a
+Minecraft-style pixel font, a fan project not affiliated with Mojang), Press Start 2P (8-bit), JetBrains Mono, Orbitron
+(sci-fi), Rajdhani (HUD) and Varela Round. They're embedded in the sample binaries; the library itself still embeds only
+Inter. All fonts share one atlas texture, so switching fonts adds no draw calls, and any TrueType or OpenType file works
+with `FontAtlas::AddFontFromFile`.
+
+**Animated backgrounds.** Constellation, matrix rain, starfield, synthwave, waves, bokeh, snow and gradient, with speed,
+density, opacity and color controls. They follow the theme's colors unless you pick your own. They're sample code
+(`samples/common/demo_backdrops.h`) that draws into a window's draw list under its widgets, so you can drop them into
+your own menus.
+
+![The eight animated backgrounds behind the gallery window, each in a different theme](docs/images/backgrounds.png)
 
 ## Performance
 
@@ -149,14 +223,15 @@ Use `--preset debug` for a Debug build. Everything lands in `build/Release` (or 
 
 ```
 build/Release/drizzy_sandbox.exe [--api d3d11|d3d12]
-build/Release/drizzy_sandbox.exe --scene gallery --screenshot out.png
+build/Release/drizzy_sandbox.exe --scene gallery --theme cyberpunk --look neon --background synthwave
+build/Release/drizzy_sandbox.exe --scene styles --size 1920x1080 --screenshot styles.png
 build/Release/drizzy_sandbox.exe --bench [--size 3840x2160]
 build/Release/drizzy_overlay_dll_test.exe [--api d3d11|d3d12] [--screenshot out.png]
 ```
 
-In the sandbox window, keys `1` to `7` switch scenes (shapes, text, two stress tests, game UI, widget gallery, 3D debug
-drawing), and `F1` opens the keybinds window, where every shortcut can be rebound. Run `drizzy_sandbox --help` for every
-option.
+In the sandbox window, keys `1` to `9` switch scenes (shapes, text, two stress tests, game UI, widget gallery, 3D debug
+drawing, every style, every theme), and `F1` opens the keybinds window, where every shortcut can be rebound. Run
+`drizzy_sandbox --help` for every option.
 
 ## Using drizzy in your project
 
@@ -228,8 +303,9 @@ renderer.Render(ui.Render());
 ```
 
 Style everything in code (`PushStyleColor`, `PushStyleVar`, `PushFont`) or from text themes (`UiStyle::SaveTheme` /
-`LoadTheme`). Dark and light themes are built in, `UiStyle::ScaleAllSizes` scales the whole style for high-DPI screens,
-and `SaveIniSettings` / `LoadIniSettings` keep window positions across runs.
+`LoadTheme`). Nine themes and six styles are built in ([Make it look like your game](#make-it-look-like-your-game)),
+`UiStyle::ScaleAllSizes` scales the whole style for high-DPI screens, and `SaveIniSettings` / `LoadIniSettings` keep
+window positions across runs.
 
 ### Standalone with your own device
 
@@ -262,9 +338,9 @@ include/drizzy/      public headers: core math, draw lists, fonts, UI, 3D debug 
 src/                 library sources; shaders/prim.hlsl is the single shared shader
 samples/sandbox/     standalone test app: scenes, screenshots, benchmark
 samples/overlay_dll/ injectable overlay DLL and its stand-in-game test host
-samples/common/      widget gallery and rebindable keybinds shared by the samples
+samples/common/      widget gallery, animated backgrounds, sample fonts and rebindable keybinds shared by the samples
 third_party/         stb_truetype and msdfgen core, compiled into drizzy_core
-assets/fonts/        Inter Regular, embedded as the default font
+assets/fonts/        Inter Regular (embedded as the default font) and the fonts the samples embed
 cmake/, tools/       shader compilation and the font-embedding build step
 ```
 
@@ -273,3 +349,10 @@ cmake/, tools/       shader compilation and the font-embedding build step
 - [stb_truetype](https://github.com/nothings/stb): public domain
 - [msdfgen](https://github.com/Chlumsky/msdfgen) core: MIT
 - [Inter](https://rsms.me/inter/) font: SIL Open Font License (`assets/fonts/Inter-LICENSE.txt`)
+- Sample fonts, all SIL Open Font License, licenses next to each in `assets/fonts/`:
+  [Monocraft](https://github.com/IdreesInc/Monocraft),
+  [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P),
+  [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono),
+  [Orbitron](https://github.com/theleagueof/orbitron),
+  [Rajdhani](https://fonts.google.com/specimen/Rajdhani),
+  [Varela Round](https://fonts.google.com/specimen/Varela+Round)

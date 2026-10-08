@@ -154,6 +154,7 @@ struct TabBarState {
     Window* window = nullptr;
     // Tabs shrink to fit the bar when their natural widths add up to more: this frame's total, last frame's total.
     float naturalWidth = 0.0f, naturalWidthPrev = 0.0f;
+    float usedWidthPrev = 0.0f;  // how far last frame's tabs reached: TabShape::Pill draws its track that wide
 };
 
 struct TableColumn {
@@ -350,6 +351,7 @@ struct UiState {
     // Color picker hue/sat kept across frames (RGB loses hue when saturation or value hits 0).
     ID colorPickerId = 0;
     float colorPickerHue = 0.0f, colorPickerSat = 0.0f, colorPickerVal = 0.0f;
+    Color colorPickerOriginal = 0;  // the color a ColorEdit's picker popup opened with
     ID popupClosedByClick = 0;  // lets a combo's button close its popup instead of reopening it
     MouseCursor cursorRequest = MouseCursor::Arrow;
     int tooltipDepth = 0;
@@ -401,7 +403,22 @@ bool IsMouseHovering(const UiState& g, const Rect& r);
 
 // ---- Rendering helpers -----------------------------------------------------------------------------------------------
 Color StyleColor(const UiState& g, UiColor color, float alphaScale = 1.0f);
+Color LerpColor(Color a, Color b, float t);  // per channel, alpha included (ui_style.cpp)
+// A widget's box: fill (shaded by UiStyle::gradient, with the bevel line) plus the frame border when `border` is set.
 void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float rounding);
+// The look-aware boxes widgets are drawn in. RenderFieldFrame: text fields, drags, combos and slider frames, in
+// UiStyle::frameShape. RenderButtonFrame: buttons in UiStyle::buttonShape; with a hard shadow a held button sinks into
+// it, and the rect returned is where it was drawn (its label goes there too).
+void RenderFieldFrame(UiState& g, const Rect& r, bool hovered, bool active);
+Rect RenderButtonFrame(UiState& g, const Rect& r, bool hovered, bool held, float rounding);
+// A glow (UiColor::Glow, UiStyle::glowSize) around a rounded rect, drawn before it. `strength` scales its opacity.
+void RenderGlow(UiState& g, const Rect& r, float rounding, float strength = 1.0f);
+// The empty box of a checkbox (and the ring of a radio button when `round`), in the look's frame shape.
+void RenderCheckBox(UiState& g, const Rect& r, bool hovered, bool held, bool round);
+// A round slider / toggle knob with the look's soft shadow (UiStyle::knobShadow) and a glow of `glow` strength.
+void RenderKnob(UiState& g, Vec2 center, float radius, Color color, float glow);
+// Knobs with a soft shadow are near-white, like a physical knob catching the light; others are `flat`.
+Color KnobColor(const UiState& g, Color flat);
 void RenderText(UiState& g, Vec2 pos, std::string_view text, Color color, float wrapWidth = 0.0f);
 // Text clipped to `clip` by trimming its glyphs (DrawList::AddTextClipped): unlike PushClipRect, no extra draw command.
 void RenderTextClipped(UiState& g, Vec2 pos, std::string_view text, Color color, const Rect& clip);
@@ -409,6 +426,10 @@ void RenderTextClipped(UiState& g, Vec2 pos, std::string_view text, Color color,
 // measured the text (TextSize), so it is not measured twice.
 void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 align, const Rect* clip = nullptr,
                        const Vec2* size = nullptr);
+void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 align, const Rect* clip,
+                       const Vec2* size, Color color);
+// Centered text over a bar filled from the left up to `fillX`: AccentText over the fill, Text past it.
+void RenderTextOverFill(UiState& g, const Rect& r, std::string_view text, float fillX);
 void RenderArrow(UiState& g, Vec2 center, float size, int dir, Color color);  // dir: 0 right, 1 down, 2 left, 3 up
 void RenderCheckMark(UiState& g, Vec2 pos, Color color, float size);
 

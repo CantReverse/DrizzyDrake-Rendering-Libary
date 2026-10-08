@@ -11,14 +11,6 @@ using namespace ui_detail;
 
 namespace {
 
-Color LerpColor(Color a, Color b, float t) {
-    auto channel = [&](int shift) {
-        const float x = float((a >> shift) & 0xFFu), y = float((b >> shift) & 0xFFu);
-        return uint32_t(x + (y - x) * t + 0.5f) << shift;
-    };
-    return channel(0) | channel(8) | channel(16) | channel(24);
-}
-
 char Lower(char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; }
 
 // Case-insensitive (ASCII) search for `needle`, which is already lowercase.
@@ -105,11 +97,56 @@ bool Ui::ToggleSwitch(std::string_view label, bool* value) {
 
     DrawList& dl = *w->dl;
     const Rect track = Rect::FromPosSize({pos.x, pos.y + std::floor((height - trackH) * 0.5f)}, {trackW, trackH});
+    const float cy = track.Center().y;
     const Color off = StyleColor(g, hovered ? UiColor::FrameBgHovered : UiColor::FrameBg);
-    dl.AddRectFilled(track, LerpColor(off, StyleColor(g, UiColor::CheckMark), t), trackH * 0.5f);
-    const float radius = trackH * 0.5f - 2.0f;
-    const float x = Lerp(track.min.x + 2.0f + radius, track.max.x - 2.0f - radius, t);
-    dl.AddCircleFilled({x, track.Center().y}, radius, StyleColor(g, UiColor::Text));
+    const Color accent = StyleColor(g, UiColor::CheckMark);
+    const Color dimKnob = StyleColor(g, hovered ? UiColor::Text : UiColor::TextDisabled);
+    switch (g.style.toggleShape) {
+    case ToggleShape::Thin: {
+        // Material: a thin track under a knob that overhangs it, the knob taking the accent color when on.
+        const float knobR = std::floor(height * 0.36f);
+        const float thinH = std::floor(knobR * 1.1f);
+        const Rect thin(track.min.x + knobR * 0.4f, cy - thinH * 0.5f, track.max.x - knobR * 0.4f, cy + thinH * 0.5f);
+        dl.AddRectFilled(thin, LerpColor(off, ScaleAlpha(accent, 0.55f), t), thinH * 0.5f);
+        const float x = Lerp(track.min.x + knobR, track.max.x - knobR, t);
+        RenderKnob(g, {x, cy}, knobR, LerpColor(KnobColor(g, dimKnob), accent, t), t);
+        break;
+    }
+    case ToggleShape::Square: {
+        RectStyle style;
+        style.fill = LerpColor(off, accent, t);
+        style.radii = g.style.frameRounding;
+        style.borderWidth = 1.0f;
+        style.borderColor = LerpColor(StyleColor(g, UiColor::Border), accent, t);
+        RenderGlow(g, track, g.style.frameRounding, t * 0.8f);
+        dl.AddRectEx(track, style);
+        const float knob = trackH - 6.0f;
+        const float x = Lerp(track.min.x + 3.0f, track.max.x - 3.0f - knob, t);
+        dl.AddRectFilled(Rect::FromPosSize({x, track.min.y + 3.0f}, {knob, knob}),
+                         LerpColor(dimKnob, StyleColor(g, UiColor::AccentText), t), std::max(g.style.frameRounding - 2.0f, 0.0f));
+        break;
+    }
+    default: {
+        const float radius = trackH * 0.5f - 2.0f;
+        const float x = Lerp(track.min.x + 2.0f + radius, track.max.x - 2.0f - radius, t);
+        if (g.style.frameShape == FrameShape::Outline) {
+            // Neon: an outline that lights up around a knob that glows.
+            RectStyle style;
+            style.fill = LerpColor(StyleColor(g, UiColor::FrameBg, 0.6f), ScaleAlpha(accent, 0.22f), t);
+            style.radii = trackH * 0.5f;
+            style.borderWidth = std::max(g.style.frameBorderSize, 1.0f);
+            style.borderColor = LerpColor(dimKnob, accent, t);
+            RenderGlow(g, track, trackH * 0.5f, t * 0.6f);
+            dl.AddRectEx(track, style);
+            RenderKnob(g, {x, cy}, radius - 1.0f, LerpColor(dimKnob, accent, t), t);
+        } else {
+            RenderGlow(g, track, trackH * 0.5f, t * 0.8f);
+            RenderFrame(g, track, LerpColor(off, accent, t), false, trackH * 0.5f);
+            RenderKnob(g, {x, cy}, radius, KnobColor(g, LerpColor(StyleColor(g, UiColor::Text), StyleColor(g, UiColor::AccentText), t)), 0.0f);
+        }
+        break;
+    }
+    }
     if (!text.empty()) {
         RenderText(g, {track.max.x + g.style.itemInnerSpacing.x, pos.y + g.style.framePadding.y}, text,
                    StyleColor(g, UiColor::Text));

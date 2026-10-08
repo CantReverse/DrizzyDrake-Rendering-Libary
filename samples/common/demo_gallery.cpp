@@ -9,95 +9,72 @@ using namespace drizzy;
 
 namespace demo {
 
-// =====================================================================================================================
-// ParticleBackground
-// =====================================================================================================================
-float ParticleBackground::Random01() {
-    m_rng ^= m_rng << 13;  // xorshift32
-    m_rng ^= m_rng >> 17;
-    m_rng ^= m_rng << 5;
-    return float(m_rng >> 8) * (1.0f / 16777216.0f);
+GallerySettings& Gallery() {
+    static GallerySettings settings;
+    return settings;
 }
 
-void ParticleBackground::Update(float deltaTime, const Rect& area) {
-    const Vec2 size = area.Size();
-    const Vec2 oldSize = m_area.Size();
-    m_area = area;
-    if (size.x <= 0.0f || size.y <= 0.0f) return;
-    if (oldSize.x > 0.0f && oldSize.y > 0.0f && oldSize != size) {
-        const Vec2 scale(size.x / oldSize.x, size.y / oldSize.y);
-        for (Node& node : m_nodes) node.pos = {node.pos.x * scale.x, node.pos.y * scale.y};
-    }
-    // Constant density: a growing area gains points (they fade in), a shrinking one drops them. The first seeding
-    // shows at once, so a single-frame screenshot is fully populated.
-    const int target = std::clamp(int(size.x * size.y * density * 1e-4f), 0, std::max(maxCount, 0));
-    const float startAge = m_nodes.empty() ? 1.0f : 0.0f;
-    if (int(m_nodes.size()) > target) m_nodes.resize(size_t(target));
-    while (int(m_nodes.size()) < target) {
-        const float angle = Random01() * 2.0f * kPi;
-        const Vec2 pos(Random01() * size.x, Random01() * size.y);
-        m_nodes.push_back({pos, {std::cos(angle) * speed, std::sin(angle) * speed}, startAge});
-    }
-
-    deltaTime = Clamp(deltaTime, 0.0f, 0.05f);  // stay stable after a long stall
-    for (Node& node : m_nodes) {
-        node.age += deltaTime;
-        node.pos += node.vel * deltaTime;
-        // Bounce off the edges, so the field stays evenly spread.
-        if (node.pos.x < 0.0f) { node.pos.x = 0.0f; node.vel.x = std::fabs(node.vel.x); }
-        else if (node.pos.x > size.x) { node.pos.x = size.x; node.vel.x = -std::fabs(node.vel.x); }
-        if (node.pos.y < 0.0f) { node.pos.y = 0.0f; node.vel.y = std::fabs(node.vel.y); }
-        else if (node.pos.y > size.y) { node.pos.y = size.y; node.vel.y = -std::fabs(node.vel.y); }
-    }
-}
-
-void ParticleBackground::Draw(DrawList& dl, Vec2 mouse) const {
-    if (ColorAlpha(background)) dl.AddRectFilled(m_area, background);
-    const Vec2 origin = m_area.min;
-    const float linkSq = linkDistance * linkDistance;
-    auto fadeIn = [](const Node& node) { return std::min(node.age * 2.0f, 1.0f); };
-
-    // Point-to-point links: alpha fades with distance. O(n^2), fine for a few hundred points.
-    for (size_t i = 0; i < m_nodes.size(); ++i) {
-        const Node& a = m_nodes[i];
-        for (size_t j = i + 1; j < m_nodes.size(); ++j) {
-            const Node& b = m_nodes[j];
-            const float d2 = LengthSq(b.pos - a.pos);
-            if (d2 >= linkSq) continue;
-            const float t = (1.0f - std::sqrt(d2) / linkDistance) * std::min(fadeIn(a), fadeIn(b));
-            dl.AddLine(origin + a.pos, origin + b.pos, ScaleAlpha(lineColor, t * 0.4f), 1.0f);
-        }
-    }
-    // Point-to-cursor links: brighter, so the field visibly reaches for the mouse as it moves.
-    if (m_area.Contains(mouse)) {
-        const float cursorSq = cursorDistance * cursorDistance;
-        for (const Node& node : m_nodes) {
-            const Vec2 p = origin + node.pos;
-            const float d2 = LengthSq(p - mouse);
-            if (d2 >= cursorSq) continue;
-            const float t = std::min((1.0f - std::sqrt(d2) / cursorDistance) * 1.6f, 1.0f) * fadeIn(node);
-            dl.AddLine(p, mouse, ScaleAlpha(cursorColor, t), 1.25f);
-        }
-    }
-    // Points on top of the lines.
-    for (const Node& node : m_nodes) dl.AddCircleFilled(origin + node.pos, 1.6f, ScaleAlpha(pointColor, fadeIn(node)));
-}
-
-// =====================================================================================================================
-// ShowWidgetGallery
-// =====================================================================================================================
 namespace {
 
-// The gallery's animated window background, in the theme's colors: points and links in the text color, cursor links
-// in the accent color. Called right after Begin, so it draws under every widget, clipped to the content area (below
-// the title and menu bars, beside the scrollbar).
-void WindowBackdrop(Ui& ui) {
-    static ParticleBackground backdrop;
-    backdrop.lineColor = backdrop.pointColor = ui.GetColor(UiColor::Text);
-    backdrop.cursorColor = ui.GetColor(UiColor::CheckMark);
+const char* const kFrameShapes[] = {"Filled", "Outline", "Underline"};
+const char* const kButtonShapes[] = {"Filled", "Outline"};
+const char* const kSliderShapes[] = {"Block", "Rail", "Fill", "Segments"};
+const char* const kCheckShapes[] = {"Check mark", "Filled box", "Square"};
+const char* const kToggleShapes[] = {"Pill", "Thin (Material)", "Square"};
+const char* const kTabShapes[] = {"Tabs", "Underline", "Pills", "Boxes"};
+const char* const kTitleShapes[] = {"Bar", "Accent stripe", "Plain", "Solid accent"};
+const char* const kLookDescriptions[] = {
+    "Filled frames, block sliders and tabs: the Dear ImGui look.",
+    "Large radii, rail sliders with shadowed knobs, filled checkboxes, pill tabs.",
+    "Outlined widgets that glow when on or focused, underlined tabs.",
+    "Underlined text fields, thin Material toggles, no chrome.",
+    "Square and outlined, segmented sliders, a solid title bar, hard shadows.",
+    "Translucent gradients with a light top edge, filling sliders, pill tabs.",
+};
+static_assert(sizeof(kLookDescriptions) / sizeof(kLookDescriptions[0]) == size_t(UiLook::Count), "one per look");
+
+void SetTheme(Ui& ui, UiTheme theme) {
+    GallerySettings& s = Gallery();
+    s.theme = theme;
+    s.palette = UiStyle::ThemePalette(theme);
+    ui.Style().ApplyTheme(theme);
+}
+
+void SetLook(Ui& ui, UiLook look) {
+    Gallery().look = look;
+    ui.Style().ApplyLook(look);
+}
+
+void SetFont(Ui& ui, int index) {
+    GallerySettings& s = Gallery();
+    if (index < 0 || index >= int(s.fonts.size())) return;
+    s.font = index;
+    ui.Style().font = s.fonts[size_t(index)].font;
+    ui.Style().fontSize = s.fonts[size_t(index)].size;
+}
+
+BackdropColors ThemeBackdropColors(const Ui& ui) {
+    BackdropColors c;
+    c.primary = ui.GetColor(UiColor::Text);
+    c.accent = ui.GetColor(UiColor::CheckMark);
+    c.fill = colors::Transparent;
+    return c;
+}
+
+// The gallery's animated window background. Called right after Begin, so it draws under every widget, clipped to the
+// content area (below the title and menu bars, beside the scrollbar).
+void WindowBackdrop(Ui& ui, Backdrop& backdrop, const BackdropColors& colors) {
     DrawList& dl = ui.WindowDrawList();
-    backdrop.Update(ui.Input().deltaTime, dl.ClipRect());
-    backdrop.Draw(dl, ui.IsWindowHovered() ? ui.GetMousePos() : Vec2(-1e30f, -1e30f));
+    backdrop.Draw(dl, dl.ClipRect(), ui.Input().deltaTime, ui.Style().font, colors,
+                  ui.IsWindowHovered() ? ui.GetMousePos() : Vec2(-1e30f, -1e30f));
+}
+
+template <typename E>
+bool EnumCombo(Ui& ui, const char* label, E* value, const char* const* names, int count) {
+    int v = int(*value);
+    if (!ui.Combo(label, &v, names, count)) return false;
+    *value = E(v);
+    return true;
 }
 
 void BasicsTab(Ui& ui, TextureId image) {
@@ -184,7 +161,16 @@ void InputTab(Ui& ui) {
 }
 
 void ColorTab(Ui& ui) {
-    ui.SeparatorText("Color edit");
+    ui.SeparatorText("Color buttons");
+    ui.TextDisabled("Click a swatch to pick its color in a popup; hover it for its values.");
+    static Color primary = Hex(0xF28C28), secondary = Hex(0x00BBF9), highlight = Rgba(241, 91, 181, 170);
+    ui.ColorEdit4("Primary##button", &primary, ColorEditFlags::NoInputs);
+    ui.SameLine(0.0f, 24.0f);
+    ui.ColorEdit4("Secondary##button", &secondary, ColorEditFlags::NoInputs);
+    ui.SameLine(0.0f, 24.0f);
+    ui.ColorEdit4("Highlight (translucent)##button", &highlight, ColorEditFlags::NoInputs);
+
+    ui.SeparatorText("With inputs");
     static Color fill = Hex(0xF28C28);
     static Color tint = Rgba(90, 200, 255, 180);
     static Color rgb = Hex(0x8AC926);
@@ -192,17 +178,26 @@ void ColorTab(Ui& ui) {
     ui.ColorEdit4("With alpha", &tint);
     ui.ColorEdit3("ColorEdit3 (RGB)", &rgb);
     ui.ColorEdit4("Hex input", &fill, ColorEditFlags::DisplayHex);
-    ui.Text("ColorButton:");
+
+    ui.SeparatorText("Swatches");
+    static const Color swatches[] = {Hex(0xF15BB5), Hex(0xFEE440), Hex(0x00BBF9), Hex(0x00F5D4), Hex(0x9B5DE5),
+                                     Hex(0xFF6B35), Hex(0x8AC926), Rgba(255, 255, 255, 120)};
+    for (int i = 0; i < int(sizeof(swatches) / sizeof(swatches[0])); ++i) {
+        if (i > 0) ui.SameLine();
+        ui.PushID(i);
+        if (ui.ColorButton("##swatch", swatches[i])) primary = swatches[i];
+        ui.PopID();
+    }
     ui.SameLine();
-    ui.ColorButton("b1", Hex(0xF15BB5));
-    ui.SameLine();
-    ui.ColorButton("b2", Hex(0x00BBF9));
-    ui.SameLine();
-    ui.ColorButton("b3", Rgba(0, 245, 212, 120));
-    ui.SeparatorText("Inline picker");
-    static Color picked = Hex(0x9B5DE5);
-    ui.SetNextItemWidth(200.0f);
-    ui.ColorPicker4("##picker", &picked);
+    ui.AlignTextToFramePadding();
+    ui.TextDisabled("click one to make it Primary");
+
+    if (ui.CollapsingHeader("Inline picker (ColorPicker4)")) {
+        static Color picked = Hex(0x9B5DE5);
+        static const Color original = Hex(0x9B5DE5);
+        ui.SetNextItemWidth(200.0f);
+        ui.ColorPicker4("##inline", &picked, ColorEditFlags::None, &original);
+    }
 }
 
 void ListsTab(Ui& ui) {
@@ -553,37 +548,286 @@ void ExtrasTab(Ui& ui) {
     if (ui.Button("Error")) ui.Notify("Could not reach the server. Retrying in 5 seconds.", NotifyType::Error, 5.0f);
 }
 
-void StyleTab(Ui& ui) {
+// A clickable card drawn in a theme's own colors: its background, a widget-colored bar, an accent dot and its name.
+bool ThemeChip(Ui& ui, UiTheme theme, float width, bool selected) {
+    const UiPalette p = UiStyle::ThemePalette(theme);
+    const float height = std::floor(ui.GetFrameHeight() * 1.3f);
+    ui.PushID(int(theme));
+    const bool clicked = ui.InvisibleButton("##chip", {width, height});
+    const bool hovered = ui.IsItemHovered();
+    ui.PopID();
+    const Rect r(ui.GetItemRectMin(), ui.GetItemRectMax());
+    DrawList& dl = ui.WindowDrawList();
+    const float rounding = std::min(ui.Style().frameRounding + 2.0f, height * 0.5f);
+    RectStyle card;
+    card.fill = WithAlpha(p.background, 255);
+    card.radii = rounding;
+    card.borderWidth = selected ? 2.0f : 1.0f;
+    card.borderColor = selected ? ui.GetColor(UiColor::CheckMark) : hovered ? p.accent : WithAlpha(p.text, 60);
+    dl.AddRectEx(r, card);
+    const float cy = r.Center().y;
+    const float dot = height * 0.18f;
+    dl.AddCircleFilled({r.min.x + height * 0.42f, cy}, dot, p.accent);
+    dl.AddRectFilled(Rect(r.max.x - height * 0.9f, cy - dot * 0.6f, r.max.x - height * 0.3f, cy + dot * 0.6f), p.surface,
+                     dot * 0.6f);
+    const Font& font = *ui.Style().font;
+    const float size = ui.Style().fontSize;
+    const char* name = UiStyle::ThemeName(theme);
+    const Vec2 textSize = font.MeasureText(name, size);
+    dl.AddTextClipped(font, size, {r.min.x + height * 0.75f, std::floor(cy - textSize.y * 0.5f)}, p.text, name,
+                      Rect(r.min.x, r.min.y, r.max.x - height * 0.95f, r.max.y));
+    return clicked;
+}
+
+void CustomizeTab(Ui& ui) {
+    GallerySettings& s = Gallery();
+    UiStyle& style = ui.Style();
+
     ui.SeparatorText("Theme");
-    static int theme = 0;
-    const int previous = theme;
-    ui.RadioButton("Dark", &theme, 0);
-    ui.SameLine();
-    ui.RadioButton("Light", &theme, 1);
-    if (theme != previous) {
-        const Font* font = ui.Style().font;
-        const float size = ui.Style().fontSize;
-        ui.Style() = theme == 0 ? UiStyle::Dark() : UiStyle::Light();
-        ui.Style().font = font;
-        ui.Style().fontSize = size;
+    const int columns = 3;
+    const float spacing = style.itemSpacing.x;
+    const float chipW = std::floor((ui.GetContentRegionAvail().x - spacing * float(columns - 1)) / float(columns));
+    for (int i = 0; i < int(UiTheme::Count); ++i) {
+        if (i % columns) ui.SameLine();
+        if (ThemeChip(ui, UiTheme(i), chipW, s.theme == UiTheme(i))) SetTheme(ui, UiTheme(i));
     }
-    ui.SliderFloat("Window rounding", &ui.Style().windowRounding, 0.0f, 16.0f, "%.0f");
-    ui.SliderFloat("Frame rounding", &ui.Style().frameRounding, 0.0f, 12.0f, "%.0f");
-    ui.SliderFloat("Frame border", &ui.Style().frameBorderSize, 0.0f, 2.0f, "%.0f");
-    ui.DragFloat("Item spacing Y", &ui.Style().itemSpacing.y, 0.2f, 0.0f, 20.0f, "%.0f");
-    ui.TextDisabled("Themes also load/save as text (UiStyle::LoadTheme/SaveTheme).");
+
+    ui.SeparatorText("Style");
+    int look = int(s.look);
+    const char* lookNames[int(UiLook::Count)];
+    for (int i = 0; i < int(UiLook::Count); ++i) lookNames[i] = UiStyle::LookName(UiLook(i));
+    if (ui.Combo("##style", &look, lookNames, int(UiLook::Count))) SetLook(ui, UiLook(look));
+    ui.TextDisabled(kLookDescriptions[size_t(s.look)]);
+
+    if (!s.fonts.empty()) {
+        ui.SeparatorText("Font");
+        s.font = std::clamp(s.font, 0, int(s.fonts.size()) - 1);
+        if (ui.BeginCombo("##font", s.fonts[size_t(s.font)].name)) {
+            for (int i = 0; i < int(s.fonts.size()); ++i) {
+                const DemoFont& f = s.fonts[size_t(i)];
+                ui.PushFont(f.font, f.size);  // each entry in its own font
+                ui.PushID(i);
+                if (ui.Selectable(f.name, i == s.font)) SetFont(ui, i);
+                ui.PopID();
+                ui.PopFont();
+            }
+            ui.EndCombo();
+        }
+        ui.SliderFloat("Font size", &style.fontSize, 9.0f, 28.0f, "%.0f px");
+    }
+
+    ui.SeparatorText("Colors");
+    ui.TextDisabled("Pick a few colors and every UI color is derived from them.");
+    UiPalette& p = s.palette;
+    bool changed = false;
+    const uint32_t swatch = ColorEditFlags::NoInputs;
+    changed |= ui.ColorEdit4("Accent", &p.accent, swatch | ColorEditFlags::NoAlpha);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Background", &p.background, swatch);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Widgets", &p.surface, swatch | ColorEditFlags::NoAlpha);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Text", &p.text, swatch | ColorEditFlags::NoAlpha);
+    changed |= ui.ColorEdit4("Text on accent", &p.accentText, swatch | ColorEditFlags::NoAlpha);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Glow", &p.glow, swatch);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Border", &p.border, swatch);
+    ui.SameLine(0.0f, 20.0f);
+    changed |= ui.ColorEdit4("Shadow", &p.shadow, swatch);
+    if (changed) style.ApplyPalette(p);
+
+    if (ui.CollapsingHeader("Every UI color")) {
+        static TextFilter filter;
+        filter.Draw(ui, "Filter##colors");
+        if (ui.BeginChild("##colors", {0.0f, 230.0f}, true)) {
+            const float half = std::floor(ui.GetContentRegionAvail().x * 0.5f);
+            int shown = 0;
+            for (int i = 0; i < int(UiColor::Count); ++i) {
+                const char* name = UiStyle::ColorName(UiColor(i));
+                if (!filter.PassFilter(name)) continue;
+                if (shown++ % 2) ui.SameLine(half);
+                ui.PushID(i);
+                ui.ColorEdit4(name, &style.colors[i], ColorEditFlags::NoInputs);
+                ui.PopID();
+            }
+        }
+        ui.EndChild();
+    }
+
+    ui.SeparatorText("Animated background");
+    Backdrop& b = s.backdrop;
+    int kind = int(b.kind);
+    const char* kindNames[int(BackdropKind::Count)];
+    for (int i = 0; i < int(BackdropKind::Count); ++i) kindNames[i] = BackdropName(BackdropKind(i));
+    if (ui.Combo("Background", &kind, kindNames, int(BackdropKind::Count))) b.kind = BackdropKind(kind);
+    ui.SliderFloat("Speed", &b.speed, 0.0f, 3.0f, "%.2fx");
+    ui.SliderFloat("Density", &b.density, 0.25f, 3.0f, "%.2fx");
+    ui.SliderFloat("Opacity", &b.opacity, 0.0f, 1.0f, "%.2f");
+    if (ui.Checkbox("Use the theme's colors", &s.backdropThemeColors) && !s.backdropThemeColors) {
+        s.backdropColors = ThemeBackdropColors(ui);  // start from what is showing
+    }
+    if (!s.backdropThemeColors) {
+        ui.ColorEdit4("Lines and points", &s.backdropColors.primary, swatch);
+        ui.SameLine(0.0f, 20.0f);
+        ui.ColorEdit4("Highlights", &s.backdropColors.accent, swatch);
+        ui.SameLine(0.0f, 20.0f);
+        ui.ColorEdit4("Fill", &s.backdropColors.fill, swatch);
+    }
+
+    if (ui.CollapsingHeader("Fine-tune the style")) {
+        ui.TextDisabled("Mix and match: every part of a style can be changed on its own.");
+        EnumCombo(ui, "Text fields", &style.frameShape, kFrameShapes, 3);
+        EnumCombo(ui, "Buttons", &style.buttonShape, kButtonShapes, 2);
+        EnumCombo(ui, "Sliders", &style.sliderShape, kSliderShapes, 4);
+        EnumCombo(ui, "Checkboxes", &style.checkShape, kCheckShapes, 3);
+        EnumCombo(ui, "Toggles", &style.toggleShape, kToggleShapes, 3);
+        EnumCombo(ui, "Tabs", &style.tabShape, kTabShapes, 4);
+        EnumCombo(ui, "Title bar", &style.titleShape, kTitleShapes, 4);
+        ui.SliderFloat("Glow", &style.glowSize, 0.0f, 24.0f, "%.0f px");
+        ui.SliderFloat("Gradient", &style.gradient, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Bevel", &style.bevel, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Knob shadow", &style.knobShadow, 0.0f, 1.0f, "%.2f");
+        ui.DragFloat2("Hard shadow", &style.hardShadow.x, 0.1f, -12.0f, 12.0f, "%.0f");
+        ui.SliderFloat("Window rounding", &style.windowRounding, 0.0f, 20.0f, "%.0f");
+        ui.SliderFloat("Frame rounding", &style.frameRounding, 0.0f, 14.0f, "%.0f");
+        ui.SliderFloat("Window border", &style.windowBorderSize, 0.0f, 3.0f, "%.0f");
+        ui.SliderFloat("Frame border", &style.frameBorderSize, 0.0f, 2.0f, "%.0f");
+        ui.SliderFloat("Window shadow", &style.windowShadowSize, 0.0f, 48.0f, "%.0f");
+        ui.DragFloat2("Item spacing", &style.itemSpacing.x, 0.2f, 0.0f, 24.0f, "%.0f");
+    }
+
+    ui.Spacing();
+    if (ui.Button("Copy theme as text")) {
+        const UiPlatform& platform = ui.Platform();
+        if (platform.setClipboardText) {
+            platform.setClipboardText(platform.userData, style.SaveTheme().c_str());
+            ui.Notify("Theme copied: paste it into a file and load it with UiStyle::LoadTheme.", NotifyType::Success);
+        } else {
+            ui.Notify("No clipboard in this host.", NotifyType::Warning);
+        }
+    }
+    ui.SameLine();
+    if (ui.Button("Reset")) {
+        SetLook(ui, s.look);
+        SetTheme(ui, s.theme);
+        SetFont(ui, s.font);
+    }
+}
+
+void ViewMenu(Ui& ui) {
+    GallerySettings& s = Gallery();
+    if (ui.BeginMenu("Theme")) {
+        for (int i = 0; i < int(UiTheme::Count); ++i) {
+            if (ui.MenuItem(UiStyle::ThemeName(UiTheme(i)), {}, s.theme == UiTheme(i))) SetTheme(ui, UiTheme(i));
+        }
+        ui.EndMenu();
+    }
+    if (ui.BeginMenu("Style")) {
+        for (int i = 0; i < int(UiLook::Count); ++i) {
+            if (ui.MenuItem(UiStyle::LookName(UiLook(i)), {}, s.look == UiLook(i))) SetLook(ui, UiLook(i));
+        }
+        ui.EndMenu();
+    }
+    if (!s.fonts.empty() && ui.BeginMenu("Font")) {
+        for (int i = 0; i < int(s.fonts.size()); ++i) {
+            ui.PushID(i);
+            if (ui.MenuItem(s.fonts[size_t(i)].name, {}, s.font == i)) SetFont(ui, i);
+            ui.PopID();
+        }
+        ui.EndMenu();
+    }
+    if (ui.BeginMenu("Background")) {
+        for (int i = 0; i < int(BackdropKind::Count); ++i) {
+            if (ui.MenuItem(BackdropName(BackdropKind(i)), {}, s.backdrop.kind == BackdropKind(i))) {
+                s.backdrop.kind = BackdropKind(i);
+            }
+        }
+        ui.EndMenu();
+    }
+}
+
+// A compact mod menu for the showcase; `i` keeps each window's values apart.
+void MiniMenu(Ui& ui, int i) {
+    static bool god[9], noclip[9], ammo[9], esp[9];
+    static float speed[9];
+    static int jump[9], quality[9], weather[9];
+    static char name[9][24];
+    static Color tint[9];
+    static bool initialized = false;
+    if (!initialized) {
+        for (int k = 0; k < 9; ++k) {
+            god[k] = esp[k] = true;
+            speed[k] = 6.5f;
+            jump[k] = 40;
+            quality[k] = 1;
+            weather[k] = 2;
+            std::snprintf(name[k], sizeof(name[k]), "Player_%d", k + 1);
+            tint[k] = Hex(0x7AE7FF);
+        }
+        initialized = true;
+    }
+    static const char* const kWeather[] = {"Clear", "Rain", "Storm", "Snow", "Fog"};
+    if (ui.BeginTabBar("tabs")) {
+        if (ui.BeginTabItem("Player")) {
+            ui.ToggleSwitch("God mode", &god[i]);
+            ui.SameLine(0.0f, 18.0f);
+            ui.ToggleSwitch("No clip", &noclip[i]);
+            ui.Checkbox("Infinite ammo", &ammo[i]);
+            ui.SameLine(0.0f, 18.0f);
+            ui.Checkbox("ESP boxes", &esp[i]);
+            ui.SliderFloat("Speed", &speed[i], 0.0f, 10.0f, "%.1f");
+            ui.SliderInt("Jump", &jump[i], 0, 100);
+            ui.RadioButton("Low", &quality[i], 0);
+            ui.SameLine();
+            ui.RadioButton("Medium", &quality[i], 1);
+            ui.SameLine();
+            ui.RadioButton("High", &quality[i], 2);
+            ui.Combo("Weather", &weather[i], kWeather, 5);
+            ui.InputText("Name", name[i], sizeof(name[i]));
+            ui.ColorEdit4("Tint", &tint[i], ColorEditFlags::NoInputs);
+            ui.SameLine(0.0f, 18.0f);
+            ui.ProgressBar(0.62f, {-1.0f, 0.0f});
+            ui.Button("Apply");
+            ui.SameLine();
+            ui.Button("Reset");
+            ui.EndTabItem();
+        }
+        if (ui.BeginTabItem("World")) {
+            ui.SliderFloat("Time of day", &speed[i], 0.0f, 24.0f, "%.1f h");
+            ui.EndTabItem();
+        }
+        if (ui.BeginTabItem("Visuals")) {
+            ui.Checkbox("Bloom", &esp[i]);
+            ui.EndTabItem();
+        }
+        ui.EndTabBar();
+    }
 }
 
 } // namespace
 
+void ApplyGallerySettings(Ui& ui) {
+    GallerySettings& s = Gallery();
+    SetLook(ui, s.look);
+    SetTheme(ui, s.theme);
+    SetFont(ui, s.font);
+}
+
 void ShowWidgetGallery(Ui& ui, TextureId image, bool* open) {
-    ui.SetNextWindowSize({640.0f, 600.0f}, Cond::FirstUseEver);
+    // On first use, wide enough for every tab label in the current font (fonts differ a lot in width).
+    const UiStyle& style = ui.Style();
+    const float tabsWidth = ui.CalcTextSize("BasicsInputColorListsTreesPopupsPlotsTablesExtrasLayoutCustomize").x +
+                            11.0f * (style.framePadding.x * 2.0f + 2.0f) + style.windowPadding.x * 2.0f +
+                            style.scrollbarSize + 8.0f;
+    ui.SetNextWindowSize({std::max(660.0f, std::floor(tabsWidth)), 640.0f}, Cond::FirstUseEver);
     ui.SetNextWindowPos({40.0f, 40.0f}, Cond::FirstUseEver);
     if (!ui.Begin("Widget Gallery", open, WindowFlags::MenuBar)) {
         ui.End();
         return;
     }
-    WindowBackdrop(ui);
+    GallerySettings& s = Gallery();
+    WindowBackdrop(ui, s.backdrop, s.backdropThemeColors ? ThemeBackdropColors(ui) : s.backdropColors);
     if (ui.BeginMenuBar()) {
         if (ui.BeginMenu("File")) {
             ui.MenuItem("New", "Ctrl+N");
@@ -611,14 +855,12 @@ void ShowWidgetGallery(Ui& ui, TextureId image, bool* open) {
             ui.EndMenu();
         }
         if (ui.BeginMenu("View")) {
-            static int theme = 0;
-            if (ui.MenuItem("Dark", {}, theme == 0)) theme = 0;
-            if (ui.MenuItem("Light", {}, theme == 1)) theme = 1;
+            ViewMenu(ui);
             ui.EndMenu();
         }
         ui.EndMenuBar();
     }
-    ui.Text("Every drizzy widget, grouped into tabs.");
+    ui.Text("Every drizzy widget, grouped into tabs. Customize changes the look.");
     ui.Separator();
     if (ui.BeginTabBar("gallery_tabs")) {
         if (ui.BeginTabItem("Basics")) { BasicsTab(ui, image); ui.EndTabItem(); }
@@ -631,10 +873,68 @@ void ShowWidgetGallery(Ui& ui, TextureId image, bool* open) {
         if (ui.BeginTabItem("Tables")) { TablesTab(ui); ui.EndTabItem(); }
         if (ui.BeginTabItem("Extras")) { ExtrasTab(ui); ui.EndTabItem(); }
         if (ui.BeginTabItem("Layout")) { LayoutTab(ui); ui.EndTabItem(); }
-        if (ui.BeginTabItem("Style")) { StyleTab(ui); ui.EndTabItem(); }
+        if (ui.BeginTabItem("Customize")) { CustomizeTab(ui); ui.EndTabItem(); }
         ui.EndTabBar();
     }
     ui.End();
+}
+
+void ShowStyleShowcase(Ui& ui, bool themes) {
+    struct Entry {
+        UiTheme theme;
+        UiLook look;
+        const char* font;  // a name prefix in Gallery().fonts; null keeps the current font
+        BackdropKind backdrop;
+    };
+    static const Entry kLooks[] = {
+        {UiTheme::Obsidian, UiLook::Classic, "Inter", BackdropKind::Constellation},
+        {UiTheme::Nord, UiLook::Soft, "Varela", BackdropKind::Bokeh},
+        {UiTheme::Cyberpunk, UiLook::Neon, "Orbitron", BackdropKind::Synthwave},
+        {UiTheme::Light, UiLook::Flat, "Inter", BackdropKind::Waves},
+        {UiTheme::Emerald, UiLook::Retro, "Monocraft", BackdropKind::MatrixRain},
+        {UiTheme::Dracula, UiLook::Glass, "Rajdhani", BackdropKind::Gradient},
+    };
+    static Backdrop backdrops[9];
+    const GallerySettings& s = Gallery();
+    const UiStyle saved = ui.Style();
+    const int count = themes ? int(UiTheme::Count) : int(sizeof(kLooks) / sizeof(kLooks[0]));
+    const int columns = 3, rows = (count + columns - 1) / columns;
+    const Vec2 display = ui.GetDisplaySize();
+    const float margin = 24.0f;
+    const Vec2 cell((display.x - margin * float(columns + 1)) / float(columns),
+                    (display.y - margin * float(rows + 1)) / float(rows));
+    for (int i = 0; i < count; ++i) {
+        Entry e = themes ? Entry{UiTheme(i), s.look, nullptr, BackdropKind::None} : kLooks[i];
+        UiStyle style = saved;
+        style.ApplyLook(e.look);
+        style.ApplyTheme(e.theme);
+        const DemoFont* font = nullptr;
+        for (const DemoFont& f : s.fonts) {
+            if (e.font && std::strncmp(f.name, e.font, std::strlen(e.font)) == 0) font = &f;
+        }
+        ui.Style() = style;
+        ui.PushFont(font ? font->font : saved.font, font ? font->size : saved.fontSize);
+        char title[96];
+        std::snprintf(title, sizeof(title), "%s  |  %s###showcase%d", UiStyle::LookName(e.look),
+                      UiStyle::ThemeName(e.theme), i);
+        ui.SetNextWindowPos({margin + float(i % columns) * (cell.x + margin), margin + float(i / columns) * (cell.y + margin)});
+        ui.SetNextWindowSize(cell);
+        if (ui.Begin(title, nullptr, WindowFlags::NoSavedSettings | WindowFlags::NoCollapse)) {
+            if (e.backdrop != BackdropKind::None) {
+                Backdrop& b = backdrops[i];
+                b.kind = e.backdrop;
+                b.opacity = e.backdrop == BackdropKind::MatrixRain ? 0.4f : e.backdrop == BackdropKind::Synthwave ? 0.7f : 0.8f;
+                WindowBackdrop(ui, b, ThemeBackdropColors(ui));
+            }
+            ui.PushID(i);
+            MiniMenu(ui, i);
+            ui.PopID();
+            if (font) ui.TextDisabled(font->name);
+        }
+        ui.End();
+        ui.PopFont();
+    }
+    ui.Style() = saved;
 }
 
 } // namespace demo

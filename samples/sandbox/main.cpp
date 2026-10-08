@@ -3,10 +3,12 @@
 // the library never does - this file shows what a host has to feed it.
 //
 //   drizzy_sandbox [--api d3d11|d3d12]          interactive window; every key is rebindable in the keybinds window (F1)
-//       1 shapes  2 text  3 shape stress  4 text stress  5 UI  6 gallery  7 3D debug   Mouse 4/5: previous/next scene
-//       Up/Down: stress count   V: vsync   Ctrl+L: log frame stats   F1: keybinds   Esc: quit
+//       1 shapes  2 text  3 shape stress  4 text stress  5 UI  6 gallery  7 3D debug  8 styles  9 themes
+//       Mouse 4/5: previous/next scene   Up/Down: stress count   V: vsync   Ctrl+L: log frame stats   F1: keybinds
+//       Esc: quit
 //   drizzy_sandbox --screenshot out.png         render offscreen and save
-//       --scene shapes|text|stress|textstress|ui|gallery|debug3d  --size WxH  --time T  --count N  --mouse X,Y  --warp
+//       --scene shapes|text|stress|textstress|ui|gallery|debug3d|styles|themes  --size WxH  --time T  --count N
+//       --mouse X,Y  --click X,Y  --theme NAME  --look NAME  --font N  --background NAME  --warp
 //   drizzy_sandbox --bench                      headless CPU / GPU cost for shapes, text and UI
 //       --count N  --frames N  --warp  --size WxH  --gpu-repeat N  --video-memory | --system-memory  --copy-prims
 
@@ -25,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -37,13 +40,17 @@ using namespace sandbox;
 
 namespace {
 
-enum class Scene { Shapes, Text, Stress, TextStress, Ui, Gallery, Debug3D };
-constexpr const char* kSceneNames[] = {"shapes", "text", "stress", "textstress", "ui", "gallery", "debug3d"};
-constexpr const char* kSceneLabels[] = {"Shapes",  "Text",           "Shape stress",    "Text stress",
-                                        "Game UI", "Widget gallery", "3D debug drawing"};
-constexpr int kSceneCount = 7;
+enum class Scene { Shapes, Text, Stress, TextStress, Ui, Gallery, Debug3D, Styles, Themes };
+constexpr const char* kSceneNames[] = {"shapes", "text", "stress", "textstress", "ui", "gallery", "debug3d", "styles",
+                                       "themes"};
+constexpr const char* kSceneLabels[] = {"Shapes",  "Text",           "Shape stress",     "Text stress",
+                                        "Game UI", "Widget gallery", "3D debug drawing", "Every style",
+                                        "Every theme"};
+constexpr int kSceneCount = 9;
 
-bool IsUiScene(Scene scene) { return scene == Scene::Ui || scene == Scene::Gallery; }
+bool IsUiScene(Scene scene) {
+    return scene == Scene::Ui || scene == Scene::Gallery || scene == Scene::Styles || scene == Scene::Themes;
+}
 bool IsStressScene(Scene scene) { return scene == Scene::Stress || scene == Scene::TextStress; }
 
 struct Options {
@@ -58,6 +65,7 @@ struct Options {
     Vec2 mouse = {-1e30f, -1e30f};  // screenshot: simulated mouse position (UI hover states)
     std::vector<Vec2> clicks;       // screenshot: simulated left clicks, in order
     bool warp = false;
+    int theme = -1, look = -1, font = -1, background = -1;  // gallery settings (-1: default)
     PrimMemoryChoice primMemory = PrimMemoryChoice::Auto;  // D3D12: d3d12::PrimMemory
     bool copyPrims = false;  // record draw lists in their own memory (copied at render) instead of into GPU memory
     uint32_t gpuRepeat = 1;    // bench: draw each frame this many times (steadier GPU timings for small workloads)
@@ -77,12 +85,27 @@ void PrintUsage() {
         "  --time T                  scene time in seconds for screenshots\n"
         "  --mouse X,Y               mouse position for UI screenshots\n"
         "  --click X,Y               click there before a UI screenshot (repeatable)\n"
+        "  --theme NAME              UI theme: dark light obsidian cyberpunk nord emerald crimson dracula sakura\n"
+        "  --look NAME               UI style: classic soft neon flat retro glass\n"
+        "  --font N                  gallery font index (0 = Inter)\n"
+        "  --background NAME         gallery backdrop: none constellation matrix starfield synthwave waves bokeh\n"
+        "                            snow gradient\n"
         "  --warp                    use the WARP software rasterizer\n"
         "  --video-memory            D3D12: per-frame prims in video memory (GPU upload heap; default if supported)\n"
         "  --system-memory           D3D12: per-frame prims in system memory (upload heap)\n"
         "  --copy-prims              record draw lists in their own memory and copy them at render, instead of\n"
         "                            straight into GPU memory\n"
         "  --gpu-repeat N            bench, D3D11: draw each frame N times and report GPU time per draw\n");
+}
+
+// Index of `name` among `count` names produced by `nameOf` (case-insensitive, prefix allowed), or -1.
+template <typename NameOf>
+int FindByName(const char* name, int count, NameOf nameOf) {
+    const size_t length = std::strlen(name);
+    for (int i = 0; i < count; ++i) {
+        if (_strnicmp(nameOf(i), name, length) == 0) return i;
+    }
+    return -1;
 }
 
 bool ParseOptions(int argc, char** argv, Options& o) {
@@ -131,6 +154,22 @@ bool ParseOptions(int argc, char** argv, Options& o) {
         } else if (arg == "--time") {
             if (!takeValue()) return false;
             o.time = std::strtof(value, nullptr);
+        } else if (arg == "--theme") {
+            if (!takeValue()) return false;
+            o.theme = FindByName(value, int(UiTheme::Count), [](int t) { return UiStyle::ThemeName(UiTheme(t)); });
+            if (o.theme < 0) return false;
+        } else if (arg == "--look") {
+            if (!takeValue()) return false;
+            o.look = FindByName(value, int(UiLook::Count), [](int l) { return UiStyle::LookName(UiLook(l)); });
+            if (o.look < 0) return false;
+        } else if (arg == "--font") {
+            if (!takeValue()) return false;
+            o.font = int(std::strtol(value, nullptr, 10));
+        } else if (arg == "--background") {
+            if (!takeValue()) return false;
+            o.background = FindByName(value, int(demo::BackdropKind::Count),
+                                      [](int b) { return demo::BackdropName(demo::BackdropKind(b)); });
+            if (o.background < 0) return false;
         } else if (arg == "--warp") {
             o.warp = true;
         } else if (arg == "--video-memory") {
@@ -224,7 +263,9 @@ struct App {
     bool Load(GpuHost& host, bool recordIntoGpuMemory) {
         const int64_t t0 = Now();
         Font* font = atlas.AddFontDefault();
-        if (!font || !atlas.Build()) return false;
+        if (!font) return false;
+        demo::Gallery().fonts = demo::AddDemoFonts(atlas, font);  // the gallery's font menu
+        if (!atlas.Build()) return false;
         atlasBuildMs = TicksToMs(Now() - t0);
         atlas.SetTexture(host.CreateTexture(atlas.Width(), atlas.Height(), atlas.Pixels()));
         atlas.ReleasePixels();
@@ -260,6 +301,8 @@ struct App {
         if (uiScene) {
             if (scene == Scene::Gallery) {
                 demo::ShowWidgetGallery(ui, assets.checker);
+            } else if (scene == Scene::Styles || scene == Scene::Themes) {
+                demo::ShowStyleShowcase(ui, scene == Scene::Themes);
             } else {
                 demo.Build(ui, time, stats, assets.checker);
             }
@@ -303,6 +346,16 @@ struct App {
 
 void SetupKeybinds(App& app);
 
+// --theme, --look, --font and --background: the gallery's settings, applied to the UI's style.
+void ApplyGalleryOptions(const Options& o, Ui& ui) {
+    demo::GallerySettings& s = demo::Gallery();
+    if (o.theme >= 0) s.theme = UiTheme(o.theme);
+    if (o.look >= 0) s.look = UiLook(o.look);
+    if (o.font >= 0) s.font = o.font;
+    if (o.background >= 0) s.backdrop.kind = demo::BackdropKind(o.background);
+    demo::ApplyGallerySettings(ui);
+}
+
 // =====================================================================================================================
 // Headless modes
 // =====================================================================================================================
@@ -315,6 +368,7 @@ int RunScreenshot(const Options& o) {
     }
     const Vec2 size{float(o.width), float(o.height)};
     if (o.count) app->stressCount = app->textStressCount = o.count;
+    ApplyGalleryOptions(o, app->ui);
     SetupKeybinds(*app);  // default bindings only, so a --click on the main menu's Keybinds button can show them
     // UI windows size themselves to their content over the first frames: let them settle, replay the clicks (a press
     // frame, a release frame, and a frame for any popup to measure itself), then settle again.
@@ -776,6 +830,7 @@ int RunWindowed(const Options& o) {
         return 1;
     }
     if (o.count) app->stressCount = app->textStressCount = o.count;
+    ApplyGalleryOptions(o, app->ui);
     g_window.ui = &app->ui;
     SetupKeybinds(*app);
     LoadKeybinds(app->binds);

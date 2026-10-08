@@ -483,17 +483,153 @@ Color StyleColor(const UiState& g, UiColor color, float alphaScale) {
     return ScaleAlpha(g.style.colors[size_t(color)], g.alpha * alphaScale);
 }
 
+// Fill (or, with UiStyle::gradient, a vertical light-to-dark shading of it) for a RectStyle.
+static void SetShadedFill(const UiState& g, RectStyle& style, Color fill) {
+    style.fill = fill;
+    if (g.style.gradient <= 0.0f) return;
+    const float k = Clamp(g.style.gradient, 0.0f, 1.0f) * 0.4f;
+    const uint32_t a = ColorAlpha(fill);
+    style.fill = LerpColor(fill, WithAlpha(colors::White, a), k);
+    style.fillEnd = LerpColor(fill, WithAlpha(colors::Black, a), k);
+    style.gradient = Gradient::Vertical;
+}
+
+// UiStyle::bevel: a light line along the straight part of the top edge, inside `inset` pixels of border.
+static void RenderBevel(UiState& g, const Rect& r, float rounding, float inset) {
+    if (g.style.bevel <= 0.0f) return;
+    const float x = std::max(rounding * 0.7f, 1.0f) + inset;
+    if (r.Width() <= x * 2.0f) return;
+    g.current->dl->AddRectFilled(Rect(r.min.x + x, r.min.y + inset, r.max.x - x, r.min.y + inset + 1.0f),
+                                 ScaleAlpha(colors::White, Clamp(g.style.bevel, 0.0f, 1.0f) * 0.45f * g.alpha));
+}
+
 void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float rounding) {
     DrawList& dl = *g.current->dl;
-    if (border && g.style.frameBorderSize > 0.0f) {
+    const bool withBorder = border && g.style.frameBorderSize > 0.0f;
+    if (withBorder || g.style.gradient > 0.0f) {
         RectStyle style;
-        style.fill = fill;
+        SetShadedFill(g, style, fill);
         style.radii = rounding;
-        style.borderWidth = g.style.frameBorderSize;
-        style.borderColor = StyleColor(g, UiColor::Border);
+        if (withBorder) {
+            style.borderWidth = g.style.frameBorderSize;
+            style.borderColor = StyleColor(g, UiColor::Border);
+        }
         dl.AddRectEx(r, style);  // fill and border in one prim
     } else {
         dl.AddRectFilled(r, fill, rounding);
+    }
+    RenderBevel(g, r, rounding, withBorder ? g.style.frameBorderSize : 0.0f);
+}
+
+void RenderGlow(UiState& g, const Rect& r, float rounding, float strength) {
+    const float size = g.style.glowSize;
+    if (size <= 0.0f || strength <= 0.0f) return;
+    g.current->dl->AddShadow(r, StyleColor(g, UiColor::Glow, strength), size, rounding, {}, true);
+}
+
+void RenderFieldFrame(UiState& g, const Rect& r, bool hovered, bool active) {
+    const UiStyle& s = g.style;
+    DrawList& dl = *g.current->dl;
+    const UiColor bg = active ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
+    switch (s.frameShape) {
+    case FrameShape::Outline: {
+        if (active) RenderGlow(g, r, s.frameRounding, 0.6f);
+        RectStyle style;
+        SetShadedFill(g, style, StyleColor(g, bg, 0.6f));
+        style.radii = s.frameRounding;
+        style.borderWidth = std::max(s.frameBorderSize, 1.0f);
+        const Color border = StyleColor(g, UiColor::Border), accent = StyleColor(g, UiColor::CheckMark);
+        style.borderColor = active ? accent : hovered ? LerpColor(border, accent, 0.6f) : border;
+        dl.AddRectEx(r, style);
+        break;
+    }
+    case FrameShape::Underline: {
+        if (hovered || active) {
+            dl.AddRectFilled(r, StyleColor(g, UiColor::FrameBgHovered, active ? 0.55f : 0.35f),
+                             CornerRadii(s.frameRounding, s.frameRounding, 0.0f, 0.0f));
+        }
+        const float thickness = active ? 2.0f : 1.0f;
+        const Rect line(r.min.x, r.max.y - thickness, r.max.x, r.max.y);
+        if (active) RenderGlow(g, line, 0.0f, 0.7f);
+        dl.AddRectFilled(line, active    ? StyleColor(g, UiColor::CheckMark)
+                               : hovered ? StyleColor(g, UiColor::Text, 0.7f)
+                                         : StyleColor(g, UiColor::TextDisabled, 0.8f));
+        break;
+    }
+    default:
+        RenderFrame(g, r, StyleColor(g, bg), true, s.frameRounding);
+        break;
+    }
+}
+
+Rect RenderButtonFrame(UiState& g, const Rect& r, bool hovered, bool held, float rounding) {
+    const UiStyle& s = g.style;
+    DrawList& dl = *g.current->dl;
+    const bool pressed = held && hovered;
+    Rect bb = r;
+    if (s.hardShadow.x != 0.0f || s.hardShadow.y != 0.0f) {
+        if (pressed) bb = r.Translated(s.hardShadow);  // pushed down into its shadow
+        else dl.AddRectFilled(r.Translated(s.hardShadow), StyleColor(g, UiColor::WindowShadow), rounding);
+    }
+    if (s.buttonShape == ButtonShape::Outline) {
+        if (hovered) RenderGlow(g, bb, rounding, pressed ? 1.0f : 0.5f);
+        RectStyle style;
+        SetShadedFill(g, style, StyleColor(g, pressed ? UiColor::HeaderActive : hovered ? UiColor::HeaderHovered
+                                                                                         : UiColor::Header, 0.5f));
+        style.radii = rounding;
+        style.borderWidth = std::max(s.frameBorderSize, 1.0f);
+        const Color accent = StyleColor(g, UiColor::CheckMark);
+        style.borderColor = hovered ? accent : LerpColor(StyleColor(g, UiColor::Border), accent, 0.45f);
+        dl.AddRectEx(bb, style);
+        RenderBevel(g, bb, rounding, style.borderWidth);
+    } else {
+        if (hovered) RenderGlow(g, bb, rounding, pressed ? 0.8f : 0.4f);
+        const UiColor color = pressed ? UiColor::ButtonActive : hovered ? UiColor::ButtonHovered : UiColor::Button;
+        RenderFrame(g, bb, StyleColor(g, color), true, rounding);
+    }
+    return bb;
+}
+
+void RenderKnob(UiState& g, Vec2 center, float radius, Color color, float glow) {
+    DrawList& dl = *g.current->dl;
+    const Rect box = Rect::FromCenter(center, {radius, radius});
+    if (g.style.knobShadow > 0.0f) {
+        dl.AddShadow(box, StyleColor(g, UiColor::WindowShadow, g.style.knobShadow), std::max(3.0f, radius * 0.45f),
+                     radius, {0.0f, std::max(1.0f, radius * 0.15f)}, true);
+    }
+    RenderGlow(g, box, radius, glow);
+    dl.AddCircleFilled(center, radius, color);
+}
+
+Color KnobColor(const UiState& g, Color flat) {
+    if (g.style.knobShadow <= 0.0f) return flat;
+    return ScaleAlpha(LerpColor(colors::White, g.style.colors[size_t(UiColor::Text)], 0.06f), g.alpha);
+}
+
+void RenderCheckBox(UiState& g, const Rect& r, bool hovered, bool held, bool round) {
+    const UiStyle& s = g.style;
+    DrawList& dl = *g.current->dl;
+    const UiColor bg = held ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
+    const float radius = (r.Width() - 1.0f) * 0.5f;
+    if (s.frameShape == FrameShape::Filled) {
+        if (round) dl.AddCircleFilled(r.Center(), radius, StyleColor(g, bg));
+        else RenderFrame(g, r, StyleColor(g, bg), true, s.frameRounding);
+        return;
+    }
+    // Outlined: a faint fill inside a ring that takes the accent color under the mouse.
+    const float width = std::max(s.frameBorderSize, s.frameShape == FrameShape::Underline ? 1.5f : 1.0f);
+    const Color fill = StyleColor(g, bg, s.frameShape == FrameShape::Underline ? 0.0f : 0.6f);
+    const Color border = hovered ? StyleColor(g, UiColor::CheckMark) : StyleColor(g, UiColor::TextDisabled, 0.9f);
+    if (round) {
+        if (ColorAlpha(fill)) dl.AddCircleFilled(r.Center(), radius, fill);
+        dl.AddCircle(r.Center(), radius, border, width);
+    } else {
+        RectStyle style;
+        style.fill = fill;
+        style.radii = std::min(s.frameRounding, r.Width() * 0.5f);
+        style.borderWidth = width;
+        style.borderColor = border;
+        dl.AddRectEx(r, style);
     }
 }
 
@@ -516,6 +652,11 @@ void RenderTextClipped(UiState& g, Vec2 pos, std::string_view text, Color color,
 
 void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 align, const Rect* clip,
                        const Vec2* knownSize) {
+    RenderTextAligned(g, r, text, align, clip, knownSize, StyleColor(g, UiColor::Text));
+}
+
+void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 align, const Rect* clip,
+                       const Vec2* knownSize, Color color) {
     if (text.empty()) return;
     const Vec2 size = knownSize ? *knownSize : TextSize(g, text);
     Vec2 pos = r.min + MaxV(Vec2(), (r.Size() - size) * align);
@@ -524,9 +665,26 @@ void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 al
     const Rect clipRect = clip ? *clip : r;
     const bool needClip = pos.x + size.x > clipRect.max.x || pos.x < clipRect.min.x;
     if (needClip) {
-        RenderTextClipped(g, pos, text, StyleColor(g, UiColor::Text), clipRect);
+        RenderTextClipped(g, pos, text, color, clipRect);
     } else {
-        RenderText(g, pos, text, StyleColor(g, UiColor::Text));
+        RenderText(g, pos, text, color);
+    }
+}
+
+void RenderTextOverFill(UiState& g, const Rect& r, std::string_view text, float fillX) {
+    if (text.empty()) return;
+    const Vec2 size = TextSize(g, text);
+    const Vec2 pos(std::floor(r.min.x + std::max(0.0f, (r.Width() - size.x) * 0.5f)),
+                   std::floor(r.min.y + std::max(0.0f, (r.Height() - size.y) * 0.5f)));
+    const Color over = StyleColor(g, UiColor::AccentText), past = StyleColor(g, UiColor::Text);
+    if (fillX <= pos.x) {
+        RenderTextAligned(g, r, text, {0.5f, 0.5f}, nullptr, &size, past);
+    } else if (fillX >= pos.x + size.x) {
+        RenderTextAligned(g, r, text, {0.5f, 0.5f}, nullptr, &size, over);
+    } else {
+        // Split where the fill ends: each half is trimmed glyph by glyph, so no clip rect (or draw call) is added.
+        RenderTextClipped(g, pos, text, over, Rect(r.min.x, r.min.y, fillX, r.max.y));
+        RenderTextClipped(g, pos, text, past, Rect(fillX, r.min.y, r.max.x, r.max.y));
     }
 }
 
@@ -1129,20 +1287,36 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     if (!w->hidden) {
         if (isModal) dl.AddRectFilled(displayRect, StyleColor(g, UiColor::ModalDimBg));
         const bool background = !(flags & WindowFlags::NoBackground);
-        if (background && !isChild && !(flags & WindowFlags::NoShadow) && style.windowShadowSize > 0.0f) {
+        const bool castsShadow = background && !isChild && !(flags & WindowFlags::NoShadow);
+        if (castsShadow && style.windowShadowSize > 0.0f) {
             // Cut out under the window: only the visible rim is shaded, not the whole window area again.
             dl.AddShadow(w->outerRect, StyleColor(g, UiColor::WindowShadow), style.windowShadowSize, rounding,
                          {0.0f, style.windowShadowSize * 0.25f}, true);
         }
+        if (castsShadow && style.glowSize > 0.0f && (focused || isPopup)) {
+            dl.AddShadow(w->outerRect, StyleColor(g, UiColor::Glow, 0.4f), style.glowSize * 1.6f, rounding, {}, true);
+        }
+        if (castsShadow && (style.hardShadow.x != 0.0f || style.hardShadow.y != 0.0f)) {
+            dl.AddRectFilled(w->outerRect.Translated(style.hardShadow), StyleColor(g, UiColor::WindowShadow), rounding);
+        }
+        // UiStyle::gradient shades window bodies and title bars at half the strength it shades widgets.
+        const float shade = Clamp(style.gradient, 0.0f, 1.0f) * 0.2f;
+        auto shadeFill = [&](RectStyle& rs, Color fill) {
+            rs.fill = fill;
+            if (shade <= 0.0f) return;
+            rs.fill = LerpColor(fill, WithAlpha(colors::White, ColorAlpha(fill)), shade);
+            rs.fillEnd = LerpColor(fill, WithAlpha(colors::Black, ColorAlpha(fill)), shade);
+            rs.gradient = Gradient::Vertical;
+        };
         // An open window draws background and border as one prim (one pass over its pixels) and keeps the title and
         // menu bars inside the border; a collapsed one is just its title bar with the border over it.
         const bool border = background && borderSize > 0.0f;
         const bool bodyWithBorder = background && !w->collapsed;
         if (bodyWithBorder) {
             RectStyle body;
-            body.fill = StyleColor(g, (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
-                                      : isChild                            ? UiColor::ChildBg
-                                                                           : UiColor::WindowBg);
+            shadeFill(body, StyleColor(g, (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
+                                          : isChild                            ? UiColor::ChildBg
+                                                                               : UiColor::WindowBg));
             body.radii = rounding;
             if (border) {
                 body.borderWidth = borderSize;
@@ -1154,34 +1328,55 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         const float innerRounding = std::max(rounding - inset, 0.0f);
         if (w->titleBarHeight > 0.0f) {
             const float bottom = w->collapsed ? rounding : 0.0f;
-            dl.AddRectFilled(Rect(title.min.x + inset, title.min.y + inset, title.max.x - inset, title.max.y),
-                             StyleColor(g, focused ? UiColor::TitleBgActive : UiColor::TitleBg),
-                             CornerRadii(innerRounding, innerRounding, bottom, bottom));
+            const Rect bar(title.min.x + inset, title.min.y + inset, title.max.x - inset, title.max.y);
+            const CornerRadii barRadii(innerRounding, innerRounding, bottom, bottom);
+            const TitleShape shape = style.titleShape;
+            const bool solid = shape == TitleShape::Solid && focused;
+            Color titleText = StyleColor(g, UiColor::Text);
+            if (shape == TitleShape::Plain) {
+                // The title sits on the window background, over a separator (a collapsed window keeps a bar).
+                if (w->collapsed) dl.AddRectFilled(bar, StyleColor(g, UiColor::TitleBg), barRadii);
+                else dl.AddRectFilled(Rect(bar.min.x, bar.max.y - 1.0f, bar.max.x, bar.max.y), StyleColor(g, UiColor::Separator));
+                if (!focused) titleText = StyleColor(g, UiColor::TextDisabled);
+            } else {
+                RectStyle rs;
+                shadeFill(rs, solid ? StyleColor(g, UiColor::CheckMark)
+                                    : StyleColor(g, focused ? UiColor::TitleBgActive : UiColor::TitleBg));
+                rs.radii = barRadii;
+                if (rs.gradient == Gradient::None) dl.AddRectFilled(bar, rs.fill, barRadii);
+                else dl.AddRectEx(bar, rs);
+                if (solid) titleText = StyleColor(g, UiColor::AccentText);
+                if (shape == TitleShape::Accent) {
+                    const Rect stripe(bar.min.x, bar.min.y, bar.max.x, bar.min.y + 2.0f);
+                    if (focused) RenderGlow(g, stripe, 0.0f, 0.8f);
+                    dl.AddRectFilled(stripe, focused ? StyleColor(g, UiColor::CheckMark) : StyleColor(g, UiColor::Border),
+                                     CornerRadii(innerRounding, innerRounding, 0.0f, 0.0f));
+                }
+            }
             float textMinX = title.min.x + style.framePadding.x;
             float textMaxX = title.max.x - style.framePadding.x;
             if (collapseRect.Width() > 0.0f) {
                 if (collapseHovered) {
                     dl.AddCircleFilled(collapseRect.Center(), g.fontSize * 0.5f + 1.0f,
-                                       StyleColor(g, UiColor::ButtonHovered));
+                                       solid ? ScaleAlpha(titleText, 0.25f) : StyleColor(g, UiColor::ButtonHovered));
                 }
-                RenderArrow(g, collapseRect.Center(), g.fontSize * 0.55f, w->collapsed ? 0 : 1,
-                            StyleColor(g, UiColor::Text));
+                RenderArrow(g, collapseRect.Center(), g.fontSize * 0.55f, w->collapsed ? 0 : 1, titleText);
                 textMinX = collapseRect.max.x + style.itemInnerSpacing.x;
             }
             if (closeRect.Width() > 0.0f) {
                 if (closeHovered) {
                     dl.AddCircleFilled(closeRect.Center(), g.fontSize * 0.5f + 1.0f,
-                                       StyleColor(g, closeHeld ? UiColor::ButtonActive : UiColor::ButtonHovered));
+                                       solid ? ScaleAlpha(titleText, closeHeld ? 0.4f : 0.25f)
+                                             : StyleColor(g, closeHeld ? UiColor::ButtonActive : UiColor::ButtonHovered));
                 }
                 const Vec2 c = closeRect.Center();
                 const float e = g.fontSize * 0.22f;
-                const Color xColor = StyleColor(g, UiColor::Text);
-                dl.AddLine(c - Vec2(e, e), c + Vec2(e, e), xColor, 1.5f, LineCap::Round);
-                dl.AddLine(c + Vec2(e, -e), c + Vec2(-e, e), xColor, 1.5f, LineCap::Round);
+                dl.AddLine(c - Vec2(e, e), c + Vec2(e, e), titleText, 1.5f, LineCap::Round);
+                dl.AddLine(c + Vec2(e, -e), c + Vec2(-e, e), titleText, 1.5f, LineCap::Round);
                 textMaxX = closeRect.min.x - style.itemInnerSpacing.x;
             }
             const Rect textRect(textMinX, title.min.y, textMaxX, title.max.y);
-            RenderTextAligned(g, textRect, VisibleText(w->name), {0.0f, 0.5f}, &textRect);
+            RenderTextAligned(g, textRect, VisibleText(w->name), {0.0f, 0.5f}, &textRect, nullptr, titleText);
         }
         if (w->menuBarHeight > 0.0f && !w->collapsed) {
             const float top = w->titleBarHeight > 0.0f ? 0.0f : innerRounding;

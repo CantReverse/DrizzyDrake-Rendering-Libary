@@ -301,8 +301,7 @@ bool InputTextImpl(UiState& g, std::string_view label, std::string_view hint, ch
     // ---- Render
     DrawList& dl = *w->dl;
     const bool showActive = active && !deactivate;
-    const UiColor frameColor = showActive ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
-    RenderFrame(g, frame, StyleColor(g, frameColor), true, g.style.frameRounding);
+    RenderFieldFrame(g, frame, hovered, showActive);
     const float textY = frame.min.y + pad.y;
     const Rect clip = Rect(frame.min.x + 1.0f, frame.min.y, frame.max.x - 1.0f, frame.max.y).Intersect(w->clipRect);
     if (showActive) {
@@ -580,8 +579,7 @@ bool InputTextMultilineImpl(UiState& g, std::string_view label, char* buffer, si
     // ---- Render
     DrawList& dl = *w->dl;
     const bool showActive = active && !deactivate;
-    const UiColor frameColor = showActive ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
-    RenderFrame(g, frame, StyleColor(g, frameColor), true, g.style.frameRounding);
+    RenderFieldFrame(g, frame, hovered, showActive);
     const std::string& shown = showActive ? s.text : std::string(current);
     const int lineCount = LineCountOf(shown);
 

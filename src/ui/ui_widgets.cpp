@@ -11,10 +11,6 @@ using namespace ui_detail;
 
 namespace {
 
-UiColor FrameColor(bool hovered, bool held) {
-    return held ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
-}
-
 // Label text drawn to the right of a framed widget.
 void RenderLabelRight(UiState& g, const Rect& frame, std::string_view label) {
     if (label.empty()) return;
@@ -26,6 +22,31 @@ void RenderLabelRight(UiState& g, const Rect& frame, std::string_view label) {
 Rect FramedItemBounds(const UiState& g, const Rect& frame, float labelWidth) {
     return {frame.min, {frame.max.x + (labelWidth > 0.0f ? g.style.itemInnerSpacing.x + labelWidth : 0.0f),
                         frame.max.y}};
+}
+
+// The background of a bar that shows a value (progress bars, plots): a filled box, or an outline in outlined looks.
+void RenderTrack(UiState& g, const Rect& r) {
+    if (g.style.frameShape == FrameShape::Outline) RenderFieldFrame(g, r, false, false);
+    else RenderFrame(g, r, StyleColor(g, UiColor::FrameBg), true, g.style.frameRounding);
+}
+
+// The blocks of a segmented bar (SliderShape::Segments) inside `r`, lit up to fraction `t`. Returns where the lit
+// blocks end.
+float RenderSegments(UiState& g, const Rect& r, float t, Color lit, Color unlit) {
+    const float gap = 2.0f;
+    const int count = std::max(4, std::min(32, int((r.Width() + gap) / std::max(r.Height() * 0.55f + gap, 4.0f))));
+    const float each = (r.Width() - gap * float(count - 1)) / float(count);
+    const int litCount = int(t * float(count) + 0.5f);
+    const float litEnd = r.min.x + (each + gap) * float(litCount) - gap;
+    if (litCount > 0) RenderGlow(g, Rect(r.min.x, r.min.y, litEnd, r.max.y), 0.0f, 0.6f);
+    DrawList& dl = *g.current->dl;
+    const float rounding = std::min(g.style.grabRounding, each * 0.5f);
+    for (int i = 0; i < count; ++i) {
+        const float x = r.min.x + (each + gap) * float(i);
+        dl.AddRectFilled(Rect(std::floor(x), r.min.y, std::floor(x + each), r.max.y), i < litCount ? lit : unlit,
+                         rounding);
+    }
+    return litCount > 0 ? litEnd : r.min.x;
 }
 
 bool ButtonEx(UiState& g, std::string_view label, Vec2 sizeArg, uint32_t flags) {
@@ -44,10 +65,9 @@ bool ButtonEx(UiState& g, std::string_view label, Vec2 sizeArg, uint32_t flags) 
     if (!ItemAdd(g, bb, id)) return false;
     bool hovered, held;
     const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held, flags);
-    const UiColor color = held && hovered ? UiColor::ButtonActive : hovered ? UiColor::ButtonHovered : UiColor::Button;
-    RenderFrame(g, bb, StyleColor(g, color), true, g.style.frameRounding);
-    const Rect inner(bb.min + pad, bb.max - pad);
-    RenderTextAligned(g, inner, text, g.style.buttonTextAlign, &bb, &textSize);
+    const Rect drawn = RenderButtonFrame(g, bb, hovered, held, g.style.frameRounding);
+    const Rect inner(drawn.min + pad, drawn.max - pad);
+    RenderTextAligned(g, inner, text, g.style.buttonTextAlign, &drawn, &textSize);
     return pressed;
 }
 
@@ -67,10 +87,37 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
     const bool isInt = valueI != nullptr;
     const float range = vmax - vmin;
     float value = isInt ? float(*valueI) : *valueF;
-    float grabW = g.style.grabMinSize;
-    if (isInt && range > 0.0f) grabW = std::max(grabW, (width - 4.0f) / (range + 1.0f));
-    grabW = std::min(grabW, std::max(width - 4.0f, 1.0f));
-    const float trackMin = frame.min.x + 2.0f + grabW * 0.5f, trackMax = frame.max.x - 2.0f - grabW * 0.5f;
+    const SliderShape shape = g.style.sliderShape;
+
+    // Where the value maps to: the grab block's travel, the rail or segments (which leave room on their right for the
+    // value text, as wide as the widest end of the range), or the whole frame.
+    float grabW = 0.0f, trackMin, trackMax;
+    Rect rail = frame;
+    float knobR = 0.0f;
+    if (shape == SliderShape::Rail || shape == SliderShape::Segments) {
+        float valueW = TextSize(g, isInt ? FormatNumber(g, format, int(vmin)) : FormatNumber(g, format, double(vmin))).x;
+        valueW = std::max(valueW, TextSize(g, isInt ? FormatNumber(g, format, int(vmax))
+                                                    : FormatNumber(g, format, double(vmax))).x);
+        if (shape == SliderShape::Rail) {
+            knobR = std::floor(frame.Height() * 0.3f);
+            rail.max.x = frame.max.x - valueW - g.style.itemInnerSpacing.x;
+        } else {
+            rail = Rect(frame.min.x + 3.0f, frame.min.y + 3.0f, frame.max.x - valueW - g.style.framePadding.x * 2.0f,
+                        frame.max.y - 3.0f);
+        }
+        rail.max.x = std::max(rail.max.x, rail.min.x + knobR * 2.0f + 8.0f);
+        trackMin = rail.min.x + knobR;
+        trackMax = rail.max.x - knobR;
+    } else if (shape == SliderShape::Fill) {
+        trackMin = frame.min.x;
+        trackMax = frame.max.x;
+    } else {
+        grabW = g.style.grabMinSize;
+        if (isInt && range > 0.0f) grabW = std::max(grabW, (width - 4.0f) / (range + 1.0f));
+        grabW = std::min(grabW, std::max(width - 4.0f, 1.0f));
+        trackMin = frame.min.x + 2.0f + grabW * 0.5f;
+        trackMax = frame.max.x - 2.0f - grabW * 0.5f;
+    }
 
     bool changed = false;
     const bool active = g.activeId == id;
@@ -91,13 +138,50 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
     }
 
     DrawList& dl = *w->dl;
-    RenderFrame(g, frame, StyleColor(g, FrameColor(hovered, active)), true, g.style.frameRounding);
     const float t = range != 0.0f ? Clamp((value - vmin) / range, 0.0f, 1.0f) : 0.0f;
     const float gx = Lerp(trackMin, trackMax, t);
-    dl.AddRectFilled(Rect(gx - grabW * 0.5f, frame.min.y + 2.0f, gx + grabW * 0.5f, frame.max.y - 2.0f),
-                     StyleColor(g, active ? UiColor::SliderGrabActive : UiColor::SliderGrab), g.style.grabRounding);
+    const Color grab = StyleColor(g, active ? UiColor::SliderGrabActive : UiColor::SliderGrab);
     const char* valueText = isInt ? FormatNumber(g, format, *valueI) : FormatNumber(g, format, double(*valueF));
-    RenderTextAligned(g, frame, valueText, {0.5f, 0.5f});
+    const Rect valueRect(rail.max.x, frame.min.y, frame.max.x - (shape == SliderShape::Segments ? g.style.framePadding.x : 0.0f),
+                         frame.max.y);
+    switch (shape) {
+    case SliderShape::Rail: {
+        const float railH = std::max(4.0f, std::floor(frame.Height() * 0.18f));
+        const float cy = std::floor(frame.Center().y);
+        const Rect track(rail.min.x, cy - railH * 0.5f, rail.max.x, cy + railH * 0.5f);
+        dl.AddRectFilled(track, StyleColor(g, hovered || active ? UiColor::FrameBgActive : UiColor::FrameBg), railH * 0.5f);
+        if (gx > track.min.x) {
+            const Rect filled(track.min.x, track.min.y, gx, track.max.y);
+            RenderGlow(g, filled, railH * 0.5f, 0.6f);
+            dl.AddRectFilled(filled, StyleColor(g, UiColor::SliderGrab), railH * 0.5f);
+        }
+        RenderKnob(g, {gx, cy}, knobR, KnobColor(g, grab), active ? 1.0f : 0.7f);
+        RenderTextAligned(g, valueRect, valueText, {1.0f, 0.5f});
+        break;
+    }
+    case SliderShape::Segments:
+        RenderFieldFrame(g, frame, hovered, active);
+        RenderSegments(g, rail, t, grab, StyleColor(g, hovered || active ? UiColor::FrameBgActive : UiColor::FrameBg));
+        RenderTextAligned(g, valueRect, valueText, {1.0f, 0.5f});
+        break;
+    case SliderShape::Fill:
+        RenderFieldFrame(g, frame, hovered, active);
+        if (gx > frame.min.x + 0.5f) {
+            const Rect filled(frame.min.x, frame.min.y, gx, frame.max.y);
+            RenderGlow(g, filled, g.style.frameRounding, active ? 0.9f : 0.5f);
+            RenderFrame(g, filled, grab, false, g.style.frameRounding);
+        }
+        RenderTextOverFill(g, frame, valueText, gx);
+        break;
+    default: {
+        RenderFieldFrame(g, frame, hovered, active);
+        const Rect grabRect(gx - grabW * 0.5f, frame.min.y + 2.0f, gx + grabW * 0.5f, frame.max.y - 2.0f);
+        RenderGlow(g, grabRect, g.style.grabRounding, active ? 1.0f : 0.6f);
+        dl.AddRectFilled(grabRect, grab, g.style.grabRounding);
+        RenderTextAligned(g, frame, valueText, {0.5f, 0.5f});
+        break;
+    }
+    }
     RenderLabelRight(g, frame, text);
     if (changed) w->lastItemStatus |= kItemEdited;
     return changed;
@@ -146,7 +230,7 @@ bool DragImpl(UiState& g, std::string_view label, float* valueF, int* valueI, fl
             ClearActiveID(g);
         }
     }
-    RenderFrame(g, frame, StyleColor(g, FrameColor(hovered, active)), true, g.style.frameRounding);
+    RenderFieldFrame(g, frame, hovered, active);
     const char* valueText = valueI ? FormatNumber(g, format, *valueI) : FormatNumber(g, format, double(*valueF));
     RenderTextAligned(g, frame, valueText, {0.5f, 0.5f});
     RenderLabelRight(g, frame, text);
@@ -206,7 +290,7 @@ void PlotImpl(Ui& ui, UiState& g, std::string_view label, const float* values, i
     const Rect total = FramedItemBounds(g, frame, TextSize(g, text).x);
     ItemSize(g, total.Size(), g.style.framePadding.y);
     if (!ItemAdd(g, total, id)) return;
-    RenderFrame(g, frame, StyleColor(g, UiColor::FrameBg), true, g.style.frameRounding);
+    RenderTrack(g, frame);
     RenderLabelRight(g, frame, text);
     if (count <= 0 || !values) return;
 
@@ -402,9 +486,8 @@ bool Ui::ImageButton(std::string_view id, TextureId texture, Vec2 size, Vec2 uv0
     if (!ItemAdd(g, bb, itemId)) return false;
     bool hovered, held;
     const bool pressed = ButtonBehavior(g, bb, itemId, &hovered, &held);
-    const UiColor color = held && hovered ? UiColor::ButtonActive : hovered ? UiColor::ButtonHovered : UiColor::Button;
-    RenderFrame(g, bb, StyleColor(g, color), true, g.style.frameRounding);
-    w->dl->AddImage(texture, Rect(bb.min + pad, bb.max - pad), uv0, uv1, ScaleAlpha(tint, g.alpha),
+    const Rect drawn = RenderButtonFrame(g, bb, hovered, held, g.style.frameRounding);
+    w->dl->AddImage(texture, Rect(drawn.min + pad, drawn.max - pad), uv0, uv1, ScaleAlpha(tint, g.alpha),
                     std::max(g.style.frameRounding - pad.x, 0.0f));
     return pressed;
 }
@@ -425,10 +508,25 @@ bool Ui::Checkbox(std::string_view label, bool* value) {
         *value = !*value;
         w->lastItemStatus |= kItemEdited;
     }
-    RenderFrame(g, check, StyleColor(g, FrameColor(hovered, held)), true, g.style.frameRounding);
+    const bool filledFrame = g.style.frameShape == FrameShape::Filled;
+    const float rounding = filledFrame ? g.style.frameRounding : std::min(g.style.frameRounding, box * 0.5f);
+    const CheckShape shape = g.style.checkShape;
+    if (!*value || shape != CheckShape::Fill) RenderCheckBox(g, check, hovered, held, false);
     if (*value) {
         const float pad = std::max(1.0f, std::floor(box / 5.0f));
-        RenderCheckMark(g, check.min + Vec2(pad, pad), StyleColor(g, UiColor::CheckMark), box - pad * 2.0f);
+        if (shape == CheckShape::Fill) {
+            RenderGlow(g, check, rounding, hovered ? 1.0f : 0.7f);
+            RenderFrame(g, check, StyleColor(g, hovered ? UiColor::SliderGrabActive : UiColor::CheckMark), false, rounding);
+            RenderCheckMark(g, check.min + Vec2(pad, pad), StyleColor(g, UiColor::AccentText), box - pad * 2.0f);
+        } else if (shape == CheckShape::Square) {
+            const float inset = std::max(3.0f, std::floor(box * 0.25f));
+            const Rect dot = check.Expanded(-inset);
+            RenderGlow(g, dot, std::max(rounding - inset * 0.5f, 0.0f), 0.9f);
+            w->dl->AddRectFilled(dot, StyleColor(g, UiColor::CheckMark), std::max(rounding - inset * 0.5f, 0.0f));
+        } else {
+            RenderGlow(g, check, rounding, 0.6f);
+            RenderCheckMark(g, check.min + Vec2(pad, pad), StyleColor(g, UiColor::CheckMark), box - pad * 2.0f);
+        }
     }
     RenderLabelRight(g, check, text);
     return pressed;
@@ -448,10 +546,20 @@ bool Ui::RadioButton(std::string_view label, bool active) {
     const bool pressed = ButtonBehavior(g, total, id, &hovered, &held);
     const Vec2 center = check.Center();
     const float radius = (box - 1.0f) * 0.5f;
-    w->dl->AddCircleFilled(center, radius, StyleColor(g, FrameColor(hovered, held)));
+    const CheckShape shape = g.style.checkShape;
+    if (!active || shape != CheckShape::Fill) RenderCheckBox(g, check, hovered, held, true);
     if (active) {
-        const float pad = std::max(1.0f, std::floor(box / 6.0f));
-        w->dl->AddCircleFilled(center, radius - pad, StyleColor(g, UiColor::CheckMark));
+        DrawList& dl = *w->dl;
+        if (shape == CheckShape::Fill) {
+            RenderGlow(g, Rect::FromCenter(center, {radius, radius}), radius, hovered ? 1.0f : 0.7f);
+            dl.AddCircleFilled(center, radius, StyleColor(g, hovered ? UiColor::SliderGrabActive : UiColor::CheckMark));
+            dl.AddCircleFilled(center, std::max(radius * 0.38f, 2.0f), StyleColor(g, UiColor::AccentText));
+        } else {
+            const float pad = shape == CheckShape::Square ? std::max(3.0f, std::floor(box * 0.25f))
+                                                          : std::max(1.0f, std::floor(box / 6.0f));
+            RenderGlow(g, Rect::FromCenter(center, {radius - pad, radius - pad}), radius - pad, 0.9f);
+            dl.AddCircleFilled(center, radius - pad, StyleColor(g, UiColor::CheckMark));
+        }
     }
     RenderLabelRight(g, check, text);
     return pressed;
@@ -474,27 +582,35 @@ void Ui::ProgressBar(float fraction, Vec2 sizeArg, std::string_view overlay) {
     const Rect bb = Rect::FromPosSize(w->cursorPos, size);
     ItemSize(g, size, g.style.framePadding.y);
     if (!ItemAdd(g, bb, 0)) return;
-    RenderFrame(g, bb, StyleColor(g, UiColor::FrameBg), true, g.style.frameRounding);
+    RenderTrack(g, bb);
+    const Color fillColor = StyleColor(g, UiColor::PlotHistogram);
+    const float rounding = g.style.frameRounding;
     if (fraction < 0.0f) {
         // Indeterminate: a segment sweeping across.
         const float t = std::fmod(float(g.time) * 0.9f, 1.4f) - 0.4f;
         const float x0 = bb.min.x + bb.Width() * std::max(t, 0.0f);
         const float x1 = bb.min.x + bb.Width() * std::min(t + 0.4f, 1.0f);
         if (x1 > x0) {
-            w->dl->AddRectFilled(Rect(x0, bb.min.y, x1, bb.max.y), StyleColor(g, UiColor::PlotHistogram),
-                                 g.style.frameRounding);
+            const Rect fill(x0, bb.min.y, x1, bb.max.y);
+            RenderGlow(g, fill, rounding, 0.6f);
+            RenderFrame(g, fill, fillColor, false, rounding);
         }
         if (!overlay.empty()) RenderTextAligned(g, bb, overlay, {0.5f, 0.5f});
         return;
     }
     fraction = Clamp(fraction, 0.0f, 1.0f);
-    if (fraction > 0.0f) {
+    float fillEnd = bb.min.x;
+    if (g.style.sliderShape == SliderShape::Segments) {
+        fillEnd = RenderSegments(g, bb.Expanded(-3.0f), fraction, fillColor, StyleColor(g, UiColor::FrameBgHovered, 0.6f));
+    } else if (fraction > 0.0f) {
         const Rect fill(bb.min, {bb.min.x + std::max(bb.Width() * fraction, 1.0f), bb.max.y});
-        w->dl->AddRectFilled(fill, StyleColor(g, UiColor::PlotHistogram), g.style.frameRounding);
+        RenderGlow(g, fill, rounding, 0.6f);
+        RenderFrame(g, fill, fillColor, false, rounding);
+        fillEnd = fill.max.x;
     }
     const std::string_view text = overlay.empty() ? std::string_view(FormatNumber(g, "%.0f%%", double(fraction * 100.0f)))
                                                   : overlay;
-    RenderTextAligned(g, bb, text, {0.5f, 0.5f});
+    RenderTextOverFill(g, bb, text, fillEnd);
 }
 
 void Ui::Bullet() {
@@ -549,11 +665,14 @@ bool Ui::BeginCombo(std::string_view label, std::string_view preview, int maxVis
 
     DrawList& dl = *w->dl;
     const float r = g.style.frameRounding;
-    RenderFrame(g, frame, StyleColor(g, FrameColor(hovered, open)), true, r);
+    RenderFieldFrame(g, frame, hovered, open);
     const Rect arrowBox(frame.max.x - height, frame.min.y, frame.max.x, frame.max.y);
-    dl.AddRectFilled(arrowBox, StyleColor(g, hovered || open ? UiColor::ButtonHovered : UiColor::Button),
-                     CornerRadii(0.0f, r, r, 0.0f));
-    RenderArrow(g, arrowBox.Center(), g.fontSize * 0.5f, 1, StyleColor(g, UiColor::Text));
+    if (g.style.frameShape == FrameShape::Filled) {
+        dl.AddRectFilled(arrowBox, StyleColor(g, hovered || open ? UiColor::ButtonHovered : UiColor::Button),
+                         CornerRadii(0.0f, r, r, 0.0f));
+    }
+    RenderArrow(g, arrowBox.Center(), g.fontSize * 0.5f, open ? 3 : 1,
+                StyleColor(g, open && g.style.frameShape != FrameShape::Filled ? UiColor::CheckMark : UiColor::Text));
     const Rect previewRect(frame.min + g.style.framePadding,
                            {arrowBox.min.x - g.style.framePadding.x, frame.max.y - g.style.framePadding.y});
     RenderTextAligned(g, previewRect, preview, {0.0f, 0.0f}, &previewRect);
@@ -783,7 +902,20 @@ bool Ui::BeginTabBar(std::string_view strId) {
     const Rect row(pos, pos + Vec2(width, height));
     ItemSize(g, row.Size(), g.style.framePadding.y);
     if (ItemAdd(g, row, id)) {
-        w->dl->AddRectFilled(Rect(row.min.x, row.max.y - 1.0f, row.max.x, row.max.y), StyleColor(g, UiColor::TabActive));
+        const Rect line(row.min.x, row.max.y - 1.0f, row.max.x, row.max.y);
+        switch (g.style.tabShape) {
+        case TabShape::Pill:
+            // The segmented control's track, as wide as last frame's tabs (immediate mode: this frame's are not known
+            // until they are submitted, and the track must be drawn under them).
+            if (bar.usedWidthPrev > 0.0f) {
+                w->dl->AddRectFilled(Rect(row.min.x, row.min.y, std::min(row.min.x + bar.usedWidthPrev, row.max.x), row.max.y),
+                                     StyleColor(g, UiColor::FrameBg), g.style.tabRounding + 2.0f);
+            }
+            break;
+        case TabShape::Underline: w->dl->AddRectFilled(line, StyleColor(g, UiColor::Separator)); break;
+        case TabShape::Box: w->dl->AddRectFilled(line, StyleColor(g, UiColor::CheckMark)); break;
+        default: w->dl->AddRectFilled(line, StyleColor(g, UiColor::TabActive)); break;
+        }
     }
     g.tabBarStack.push_back(&bar);
     w->idStack.push_back(id);
@@ -796,6 +928,7 @@ void Ui::EndTabBar() {
     TabBarState* bar = g.tabBarStack.back();
     if (!bar->selectedSubmitted) bar->selected = 0;  // the selected tab is gone: the first tab takes over
     bar->naturalWidthPrev = bar->naturalWidth;
+    bar->usedWidthPrev = std::max(0.0f, bar->nextX - bar->startX - 2.0f);
     g.tabBarStack.pop_back();
     PopID();
 }
@@ -824,11 +957,56 @@ bool Ui::BeginTabItem(std::string_view label) {
     if (ItemAdd(g, bb, id)) {
         bool hovered, held;
         if (ButtonBehavior(g, bb, id, &hovered, &held, kButtonPressOnClick)) bar.nextSelected = id;
-        const UiColor color = selected ? UiColor::TabActive : hovered ? UiColor::TabHovered : UiColor::Tab;
         const float r = g.style.tabRounding;
-        w->dl->AddRectFilled(Rect(bb.min, {bb.max.x, bb.max.y - (selected ? 0.0f : 1.0f)}), StyleColor(g, color),
+        DrawList& dl = *w->dl;
+        // Unselected labels are dimmed in the looks without a tab background.
+        const Color dim = selected || hovered ? StyleColor(g, UiColor::Text) : StyleColor(g, UiColor::Text, 0.62f);
+        switch (g.style.tabShape) {
+        case TabShape::Underline: {
+            if (hovered && !selected) dl.AddRectFilled(bb, StyleColor(g, UiColor::FrameBgHovered, 0.5f), CornerRadii(r, r, 0.0f, 0.0f));
+            if (selected) {
+                const Rect bar2(bb.min.x, bb.max.y - 2.0f, bb.max.x, bb.max.y);
+                RenderGlow(g, bar2, 0.0f, 0.9f);
+                dl.AddRectFilled(bar2, StyleColor(g, UiColor::CheckMark));
+            }
+            RenderTextAligned(g, bb, text, {0.5f, 0.5f}, nullptr, &textSize, dim);
+            break;
+        }
+        case TabShape::Pill: {
+            const Rect pill = bb.Expanded(-2.0f);
+            if (selected) {
+                if (g.style.knobShadow > 0.0f) {
+                    dl.AddShadow(pill, StyleColor(g, UiColor::WindowShadow, g.style.knobShadow * 0.8f), 4.0f, r, {0.0f, 1.0f}, true);
+                }
+                RenderGlow(g, pill, r, 0.7f);
+                RenderFrame(g, pill, StyleColor(g, UiColor::TabActive), false, r);
+            } else if (hovered) {
+                dl.AddRectFilled(pill, StyleColor(g, UiColor::TabHovered, 0.7f), r);
+            }
+            RenderTextAligned(g, bb, text, {0.5f, 0.5f}, nullptr, &textSize, dim);
+            break;
+        }
+        case TabShape::Box: {
+            const Rect box(bb.min, {bb.max.x, bb.max.y - 1.0f});
+            RectStyle style;
+            style.fill = selected ? StyleColor(g, UiColor::CheckMark) : StyleColor(g, hovered ? UiColor::TabHovered : UiColor::Tab);
+            style.radii = CornerRadii(r, r, 0.0f, 0.0f);
+            style.borderWidth = 1.0f;
+            style.borderColor = StyleColor(g, selected ? UiColor::CheckMark : UiColor::Border);
+            if (selected) RenderGlow(g, box, r, 0.7f);
+            dl.AddRectEx(box, style);
+            RenderTextAligned(g, bb, text, {0.5f, 0.5f}, nullptr, &textSize,
+                              StyleColor(g, selected ? UiColor::AccentText : UiColor::Text));
+            break;
+        }
+        default: {
+            const UiColor color = selected ? UiColor::TabActive : hovered ? UiColor::TabHovered : UiColor::Tab;
+            dl.AddRectFilled(Rect(bb.min, {bb.max.x, bb.max.y - (selected ? 0.0f : 1.0f)}), StyleColor(g, color),
                              CornerRadii(r, r, 0.0f, 0.0f));
-        RenderTextAligned(g, bb, text, {0.5f, 0.5f}, nullptr, &textSize);
+            RenderTextAligned(g, bb, text, {0.5f, 0.5f}, nullptr, &textSize);
+            break;
+        }
+        }
     }
     return selected;
 }

@@ -102,11 +102,14 @@ struct InputTextFlags {
 struct ColorEditFlags {
     enum : uint32_t {
         None = 0,
-        NoAlpha = 1u << 0,    // ignore the alpha channel (RGB only)
-        NoInputs = 1u << 1,   // no RGB/hex text boxes, just the swatch / picker
-        NoPicker = 1u << 2,   // clicking the swatch does not open a picker popup
-        NoLabel = 1u << 3,    // do not draw the label to the right
-        DisplayHex = 1u << 4, // the text box shows "#RRGGBBAA" instead of R/G/B/A integers
+        NoAlpha = 1u << 0,        // ignore the alpha channel (RGB only)
+        NoInputs = 1u << 1,       // no RGB/hex boxes: just a swatch button that opens the picker popup, and the label
+        NoPicker = 1u << 2,       // clicking the swatch does not open a picker popup
+        NoLabel = 1u << 3,        // do not draw the label to the right
+        DisplayHex = 1u << 4,     // the text box shows "#RRGGBBAA" instead of R/G/B/A integers
+        NoSwatch = 1u << 5,       // ColorEdit: no swatch next to the inputs
+        NoSidePreview = 1u << 6,  // ColorPicker4: no "Current" / "Original" swatches beside the picker
+        NoTooltip = 1u << 7,      // no tooltip with the color's values when hovering the swatch
     };
 };
 
@@ -168,6 +171,8 @@ enum class UiColor : uint8_t {
     SliderGrab, SliderGrabActive, Button, ButtonHovered, ButtonActive, Header, HeaderHovered, HeaderActive, Separator,
     ResizeGrip, ResizeGripHovered, ResizeGripActive, Tab, TabHovered, TabActive, PlotLines, PlotHistogram,
     TextSelectedBg, ModalDimBg, MenuBarBg, TableHeaderBg, TableBorder, TableRowBg, TableRowBgAlt,
+    Glow,        // glows around checked, active and focused widgets (UiStyle::glowSize)
+    AccentText,  // text and marks drawn on an accent fill: a filled checkbox's mark, a solid title, a slider's fill
     Count
 };
 
@@ -175,8 +180,91 @@ enum class UiColor : uint8_t {
 enum class UiStyleVar : uint8_t {
     Alpha, WindowPadding, WindowRounding, WindowBorderSize, WindowShadowSize, WindowMinSize, FramePadding,
     FrameRounding, FrameBorderSize, ItemSpacing, ItemInnerSpacing, IndentSpacing, ScrollbarSize, ScrollbarRounding,
-    GrabMinSize, GrabRounding, PopupRounding, TabRounding, ButtonTextAlign, CellPadding,
+    GrabMinSize, GrabRounding, PopupRounding, TabRounding, ButtonTextAlign, CellPadding, GlowSize, Gradient, Bevel,
+    HardShadow, KnobShadow,
     Count
+};
+
+// ---- Themes and looks ---------------------------------------------------------------------------------------------
+// A theme is a color palette (UiStyle::colors). A look is how widgets are shaped and drawn: sizes, roundings, and the
+// shape and effect settings below. The two are independent, so any theme works with any look:
+//
+//   ui.Style().ApplyTheme(UiTheme::Cyberpunk);  // colors only
+//   ui.Style().ApplyLook(UiLook::Neon);         // shapes, sizes and effects only
+enum class UiTheme : uint8_t {
+    Dark,       // slate with a blue accent (the default)
+    Light,      // light grey with a blue accent
+    Obsidian,   // near black with a gold accent
+    Cyberpunk,  // deep violet with a hot pink accent and cyan glow
+    Nord,       // arctic blue-grey with a frost accent
+    Emerald,    // black-green with a phosphor green accent
+    Crimson,    // warm charcoal with a red accent
+    Dracula,    // the Dracula palette: purple and pink on grey
+    Sakura,     // light pink with a rose accent
+    Count
+};
+
+enum class UiLook : uint8_t {
+    Classic,  // filled frames, block sliders, check marks, tabs: the Dear ImGui look (the default)
+    Soft,     // large radii, rail sliders with shadowed knobs, filled checkboxes, pill tabs, a borderless title
+    Neon,     // outlined widgets that glow when on or focused, underlined tabs, an accent stripe on the title
+    Flat,     // underlined text fields, thin Material-style toggles and sliders, square corners, no chrome
+    Retro,    // square, outlined and bordered, segmented sliders, a solid title bar and hard offset shadows
+    Glass,    // translucent gradients with a light top edge, pill tabs, filling sliders
+    Count
+};
+
+// How text fields, drags and combo boxes are drawn.
+enum class FrameShape : uint8_t {
+    Filled,     // a filled box
+    Outline,    // a faint box with an outline that takes the accent color when focused
+    Underline,  // a line under the value, in the accent color when focused
+};
+enum class ButtonShape : uint8_t {
+    Filled,   // a filled box
+    Outline,  // an outline that fills in (and glows) when hovered
+};
+enum class SliderShape : uint8_t {
+    Block,     // a filled frame with a grab block, the value in the middle
+    Rail,      // a thin rail filled up to a round knob, the value to its right
+    Fill,      // the frame fills up to the value, which reads over it
+    Segments,  // a row of blocks that light up, the value to its right
+};
+enum class CheckShape : uint8_t {
+    Check,   // a check mark in the box
+    Fill,    // the box fills with the accent color, the mark drawn in AccentText
+    Square,  // a smaller filled square inside the box
+};
+enum class ToggleShape : uint8_t {
+    Pill,    // a knob inside a rounded track
+    Thin,    // a knob larger than its thin track (Material)
+    Square,  // a square knob in a square track
+};
+enum class TabShape : uint8_t {
+    Tab,        // tabs with rounded top corners over a line
+    Underline,  // plain labels; the selected one is underlined in the accent color
+    Pill,       // a segmented control: the selected tab is a pill inside a track
+    Box,        // outlined boxes; the selected one is filled with the accent color
+};
+enum class TitleShape : uint8_t {
+    Bar,     // a filled title bar
+    Accent,  // a title bar with an accent stripe along its top edge
+    Plain,   // the title on the window background, over a separator line
+    Solid,   // a title bar filled with the accent color, the title in AccentText
+};
+
+// The handful of colors a theme is built from; UiStyle::ApplyPalette derives every UiColor from them.
+struct UiPalette {
+    Color background;  // window body (its alpha is the window's opacity)
+    Color surface;     // widgets at rest: frames, buttons, tabs
+    Color text;
+    Color accent;      // checks, sliders, selection, focus
+    Color accentText;  // text and marks over an accent fill
+    Color glow;        // glow effects (usually the accent)
+    Color border;      // window and widget outlines
+    Color shadow;      // window shadows
+    Color secondary;   // plots; 0 uses the accent
+    bool light = false;  // a light background: hover states darken instead of lighten
 };
 
 struct UiStyle {
@@ -203,18 +291,45 @@ struct UiStyle {
     Vec2 buttonTextAlign = {0.5f, 0.5f};
     Vec2 cellPadding = {6.0f, 3.0f};  // inside table cells
     float disabledAlpha = 0.5f;
+
+    // ---- Look: widget shapes and effects (ApplyLook sets all of these) ----
+    FrameShape frameShape = FrameShape::Filled;
+    ButtonShape buttonShape = ButtonShape::Filled;
+    SliderShape sliderShape = SliderShape::Block;
+    CheckShape checkShape = CheckShape::Check;
+    ToggleShape toggleShape = ToggleShape::Pill;
+    TabShape tabShape = TabShape::Tab;
+    TitleShape titleShape = TitleShape::Bar;
+    float glowSize = 0.0f;     // blur radius of the glow (UiColor::Glow) around checked, active and focused widgets; 0 = off
+    float gradient = 0.0f;     // 0..1: vertical shading of buttons, frames, title bars and windows (light top, dark bottom)
+    float bevel = 0.0f;        // 0..1: opacity of a light line along the top inside edge of buttons and frames
+    Vec2 hardShadow = {};      // offset of a solid shadow (UiColor::WindowShadow) under windows and buttons; 0 = off
+    float knobShadow = 0.0f;   // 0..1: opacity of a soft shadow under slider and toggle knobs
+
     Color colors[size_t(UiColor::Count)] = {};
 
-    UiStyle();  // dark theme
+    UiStyle();  // dark theme, classic look
     static UiStyle Dark();
     static UiStyle Light();
+    static UiStyle Make(UiTheme theme, UiLook look = UiLook::Classic);
+
+    // Replaces the colors (a theme) or the sizes, shapes and effects (a look); everything else is kept, including the
+    // font, font size and global alpha.
+    void ApplyTheme(UiTheme theme);
+    void ApplyLook(UiLook look);
+    void ApplyPalette(const UiPalette& palette);  // a theme of your own from a few colors
+    static UiPalette ThemePalette(UiTheme theme);  // the colors a built-in theme is made from (Dark/Light: approximate)
+    static const char* ThemeName(UiTheme theme);
+    static const char* LookName(UiLook look);
 
     // Multiplies every size by `scale` (for DPI scaling). Does not touch fontSize.
     void ScaleAllSizes(float scale);
 
     // Themes as text: one "name = value" per line, '#' starts a comment.
     //   windowRounding = 8          framePadding = 8, 5          color.Button = #3A3F55FF
-    // Unknown names and malformed values are reported in `error` (with line numbers) and skipped.
+    //   sliderShape = Rail          theme = Nord                 look = Neon
+    // "theme" and "look" apply a built-in theme or look (later lines override parts of it). Unknown names and
+    // malformed values are reported in `error` (with line numbers) and skipped.
     bool LoadTheme(std::string_view text, std::string* error = nullptr);
     std::string SaveTheme() const;
 
@@ -438,13 +553,18 @@ public:
                             uint32_t flags = InputTextFlags::None);
 
     // ---- Color ------------------------------------------------------------------------------------------------------
-    // A color swatch. Returns true when clicked. `size` of 0 fits one frame height square.
+    // A color swatch. Returns true when clicked. `size` of 0 fits one frame height square. Translucent colors show
+    // their opaque color on the left half and the translucent one over a checkerboard on the right.
     bool ColorButton(std::string_view id, Color color, Vec2 size = {}, uint32_t flags = ColorEditFlags::None);
-    // Swatch + optional R/G/B(/A) or hex box + label; clicking the swatch opens a picker. Edits `color` in place.
+    // R/G/B(/A) or hex boxes, a swatch and the label. Clicking the swatch opens the picker in a popup, which edits
+    // `color` in place (Escape or a click outside closes it; its "Original" swatch restores the color it opened with).
+    // With ColorEditFlags::NoInputs it is just the swatch button and the label.
     bool ColorEdit3(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None);
     bool ColorEdit4(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None);
-    // The full picker: saturation/value square, hue bar, and (unless NoAlpha) an alpha bar, plus inputs.
-    bool ColorPicker4(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None);
+    // The full picker: saturation/value square, hue bar, and (unless NoAlpha) an alpha bar, with "Current" and (given
+    // `original`) "Original" swatches beside it and RGBA and hex boxes below. ColorEdit's popup is this picker.
+    bool ColorPicker4(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None,
+                      const Color* original = nullptr);
 
     // ---- Combos, lists, menus ---------------------------------------------------------------------------------------
     bool BeginCombo(std::string_view label, std::string_view preview, int maxVisibleItems = 8);

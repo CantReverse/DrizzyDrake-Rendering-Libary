@@ -87,8 +87,12 @@ target_include_directories(drizzy_core
 target_compile_definitions(drizzy_core PRIVATE MSDFGEN_PUBLIC= MSDFGEN_USE_CPP11)
 target_link_libraries(drizzy_core PRIVATE drizzy_options)
 
-if(DRIZZY_EMBED_DEFAULT_FONT)
+# Build-time helper that embeds binary files (fonts) as byte arrays.
+if(DRIZZY_EMBED_DEFAULT_FONT OR DRIZZY_BUILD_SAMPLES)
   add_executable(drizzy_bin2c tools/bin2c.cpp)
+endif()
+
+if(DRIZZY_EMBED_DEFAULT_FONT)
   set(_font "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf")
   add_custom_command(
     OUTPUT "${DRIZZY_GENERATED_DIR}/default_font.cpp"
@@ -154,6 +158,38 @@ set_source_files_properties(src/shaders/prim.hlsl PROPERTIES HEADER_FILE_ONLY TR
 # Samples
 # ---------------------------------------------------------------------------------------------------------------------
 if(DRIZZY_BUILD_SAMPLES AND DRIZZY_BUILD_D3D11 AND DRIZZY_BUILD_D3D12)
+  # The fonts the samples offer besides Inter (all SIL Open Font License; see assets/fonts/*-LICENSE.txt), embedded
+  # so the overlay DLL needs no files next to it.
+  set(_demo_fonts Monocraft PressStart2P-Regular JetBrainsMono-Regular Orbitron-Variable Rajdhani-Medium
+                  VarelaRound-Regular)
+  set(_demo_font_sources)
+  foreach(_name IN LISTS _demo_fonts)
+    string(MAKE_C_IDENTIFIER "kDemoFont_${_name}" _symbol)
+    set(_ttf "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/${_name}.ttf")
+    set(_out "${DRIZZY_GENERATED_DIR}/demo_font_${_name}.cpp")
+    add_custom_command(
+      OUTPUT "${_out}"
+      COMMAND drizzy_bin2c "${_ttf}" "${_out}" ${_symbol}
+      DEPENDS drizzy_bin2c "${_ttf}"
+      COMMENT "Embedding ${_name}.ttf"
+      VERBATIM)
+    list(APPEND _demo_font_sources "${_out}")
+  endforeach()
+
+  # Sample code shared by the sandbox and the overlay DLL: the widget gallery, its animated backdrops and fonts.
+  add_library(drizzy_demo_common STATIC
+    samples/common/demo_gallery.h
+    samples/common/demo_gallery.cpp
+    samples/common/demo_backdrops.h
+    samples/common/demo_backdrops.cpp
+    samples/common/demo_fonts.h
+    samples/common/demo_fonts.cpp
+    ${_demo_font_sources})
+  target_include_directories(drizzy_demo_common PUBLIC samples/common)
+  target_link_libraries(drizzy_demo_common PUBLIC drizzy_core PRIVATE drizzy_options)
+  # Like the samples' own code: an application's code, not part of the library's whole-program optimization.
+  set_property(TARGET drizzy_demo_common PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+
   add_executable(drizzy_sandbox
     samples/sandbox/main.cpp
     samples/sandbox/host.h
@@ -163,14 +199,12 @@ if(DRIZZY_BUILD_SAMPLES AND DRIZZY_BUILD_D3D11 AND DRIZZY_BUILD_D3D12)
     samples/sandbox/scenes.cpp
     samples/sandbox/ui_demo.h
     samples/sandbox/ui_demo.cpp
-    samples/common/demo_gallery.h
-    samples/common/demo_gallery.cpp
     samples/common/keybinds.h
     samples/common/keybinds.cpp
     samples/sandbox/png_writer.h)
   target_compile_definitions(drizzy_sandbox PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_include_directories(drizzy_sandbox PRIVATE samples/common)
-  target_link_libraries(drizzy_sandbox PRIVATE drizzy_d3d11 drizzy_d3d12 dxgi drizzy_options)
+  target_link_libraries(drizzy_sandbox PRIVATE drizzy_demo_common drizzy_d3d11 drizzy_d3d12 dxgi drizzy_options)
   set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT drizzy_sandbox)
   # The sandbox's own code (the benchmark scenes) is compiled without /GL, like a game DLL that just links the
   # libraries: the libraries are still optimized together at link time, but benchmark numbers are not skewed by
@@ -181,12 +215,11 @@ if(DRIZZY_BUILD_SAMPLES AND DRIZZY_BUILD_D3D11 AND DRIZZY_BUILD_D3D12)
   # drizzy itself installs no hooks; this sample does. drizzy_overlay_dll_test is a stand-in game that loads the DLL.
   add_library(drizzy_overlay_dll SHARED
     samples/overlay_dll/overlay_dll.cpp
-    samples/overlay_dll/vmt_hook.h
-    samples/common/demo_gallery.h
-    samples/common/demo_gallery.cpp)
+    samples/overlay_dll/vmt_hook.h)
   target_compile_definitions(drizzy_overlay_dll PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_include_directories(drizzy_overlay_dll PRIVATE samples/common)
-  target_link_libraries(drizzy_overlay_dll PRIVATE drizzy_d3d11 drizzy_d3d12 dxgi d3d11 d3d12 drizzy_options)
+  target_link_libraries(drizzy_overlay_dll PRIVATE drizzy_demo_common drizzy_d3d11 drizzy_d3d12 dxgi d3d11 d3d12
+                                                   drizzy_options)
   # A game DLL is linked into a process it does not control: its own code is not whole-program-optimized with the host.
   set_property(TARGET drizzy_overlay_dll PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 

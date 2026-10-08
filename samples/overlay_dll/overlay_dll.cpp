@@ -278,6 +278,7 @@ DWORD WINAPI SetupThread(LPVOID) {
 
     // The font atlas is CPU-only here; its texture is uploaded in the first Present, once a device exists.
     Font* font = g->atlas.AddFontDefault();
+    demo::Gallery().fonts = demo::AddDemoFonts(g->atlas, font);  // the gallery's View > Font menu
     g->atlas.Build();
     g->ui.Style().font = font;
     g->ui.Platform().getClipboardText = &Win32GetClipboard;
