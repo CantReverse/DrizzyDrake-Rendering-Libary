@@ -112,8 +112,8 @@ builds them, so there is nothing left to copy at render time.
 Get the source with git:
 
 ```
-git clone https://github.com/CantReverse/OVODrizzy-Rendering-Libary.git
-cd OVODrizzy-Rendering-Libary
+git clone https://github.com/CantReverse/DrizzyDrake-Rendering-Libary.git
+cd DrizzyDrake-Rendering-Libary
 ```
 
 Without git, use **Code > Download ZIP** on the GitHub page and extract it. Then, from the repository root:
