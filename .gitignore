@@ -1,0 +1,8 @@
+/build/
+/out/
+/.vs/
+*.user
+*.png
+!docs/**/*.png
+# private project notes, not for the public repo
+/context.md
