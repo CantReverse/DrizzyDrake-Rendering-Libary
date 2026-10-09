@@ -67,7 +67,7 @@ struct GroupData {
 
 struct Window {
     ID id = 0;
-    std::string name;
+    detail::SecureString name;  // caller's Begin() label, kept encrypted at rest; decode() to read
     uint32_t flags = 0;
     Window* parent = nullptr;  // child windows: the window they are embedded in
     Window* root = nullptr;    // the top-level window whose draw list this window uses
@@ -160,7 +160,7 @@ struct TabBarState {
 };
 
 struct TableColumn {
-    std::string label;  // copied from TableSetupColumn: it is drawn later by TableHeadersRow
+    detail::SecureString label;  // copied from TableSetupColumn (kept encrypted at rest): drawn later by TableHeadersRow
     uint32_t flags = 0;
     bool initialized = false;  // the persistent values below were set up
     float weight = 1.0f;       // stretch columns
@@ -201,7 +201,7 @@ struct TableState {
 };
 
 struct Notification {
-    std::string text;
+    detail::SecureString text;  // caller's message, kept encrypted at rest; decode() to read
     NotifyType type = NotifyType::Info;
     float duration = 3.0f;
     float age = 0.0f;

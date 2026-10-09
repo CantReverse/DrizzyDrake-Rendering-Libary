@@ -288,7 +288,7 @@ void Ui::Notify(std::string_view text, NotifyType type, float seconds) {
     UiState& g = *m;
     if (g.notifications.size() >= 16) g.notifications.erase(g.notifications.begin());  // oldest goes first
     Notification n;
-    n.text.assign(text.data(), text.size());
+    n.text.assign(text);
     n.type = type;
     n.duration = std::max(seconds, 0.5f);
     g.notifications.push_back(std::move(n));
@@ -315,7 +315,9 @@ void RenderNotifications(UiState& g) {
             n.age += g.input.deltaTime;  // hidden ones still expire
             continue;
         }
-        const Vec2 textSize = TextSize(g, n.text, textWidth);
+        const auto plain = n.text.decode();  // wiped at the end of this iteration
+        const std::string_view ntext = plain.view();
+        const Vec2 textSize = TextSize(g, ntext, textWidth);
         const float height = textSize.y + pad.y * 2.0f;
         const Rect r(g.displaySize.x - margin - width, bottom - height, g.displaySize.x - margin, bottom);
         const bool hovered = r.Contains(g.mousePos);
@@ -332,7 +334,7 @@ void RenderNotifications(UiState& g) {
             TextStyle style;
             style.color = ScaleAlpha(StyleColor(g, UiColor::Text), alpha);
             style.wrapWidth = textWidth;
-            g.foreground.AddText(*g.font, g.fontSize, {r.min.x + pad.x + 6.0f, r.min.y + pad.y}, n.text, style);
+            g.foreground.AddText(*g.font, g.fontSize, {r.min.x + pad.x + 6.0f, r.min.y + pad.y}, ntext, style);
         }
         bottom -= height + 8.0f;
         ++shown;

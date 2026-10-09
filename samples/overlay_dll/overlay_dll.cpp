@@ -94,14 +94,17 @@ std::vector<uint32_t> MakeChecker() {
 void BuildMenu(Ui& ui) {
     ui.SetNextWindowPos({ui.GetDisplaySize().x - 300.0f, 40.0f}, Cond::FirstUseEver);
     ui.SetNextWindowSize({260.0f, 0.0f}, Cond::FirstUseEver);
-    if (ui.Begin("drizzy overlay", nullptr, WindowFlags::AlwaysAutoResize)) {
+    // The labels your game passes in live in your binary; wrap them in DZ_ENCRYPT to keep them out of `strings` and
+    // out of a memory scan (decrypted only for the call, then wiped). The runtime `api` text below cannot be - it is
+    // built at runtime, so your code holds it in plaintext before drizzy ever sees it.
+    if (ui.Begin(DZ_ENCRYPT("drizzy overlay"), nullptr, WindowFlags::AlwaysAutoResize)) {
         const char* api = g->api == Api::D3D12 ? "D3D12" : "D3D11";
         const overlay::OverlayStats& s = g->api == Api::D3D12 ? g->d12.LastFrameStats() : g->d11.LastFrameStats();
         ui.TextF("%s  |  injected overlay", api);
         ui.TextF("overlay cpu %.3f ms", double(s.renderCpuMs));
         if (s.gpuValid) ui.TextF("overlay gpu %.3f ms", double(s.gpuMs));
         ui.TextF("%u prims, %u draw calls", s.prims, s.drawCalls);
-        ui.TextDisabled("Insert: toggle   End: unload");
+        ui.TextDisabled(DZ_ENCRYPT("Insert: toggle   End: unload"));
     }
     ui.End();
     demo::ShowWidgetGallery(ui, g->checker);

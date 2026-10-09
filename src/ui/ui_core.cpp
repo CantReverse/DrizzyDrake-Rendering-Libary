@@ -94,7 +94,8 @@ Vec2 CalcAutoFitSize(const UiState& g, const Window* w, float maxHeight) {
         // Room for the title and its buttons.
         const float buttons = (w->flags & WindowFlags::NoCollapse ? 0.0f : g.fontSize + g.style.itemInnerSpacing.x) +
                               g.fontSize + g.style.itemInnerSpacing.x;
-        size.x = std::max(size.x, TextSize(g, VisibleText(w->name)).x + g.style.framePadding.x * 2.0f + buttons);
+        const auto nm = w->name.decode();
+        size.x = std::max(size.x, TextSize(g, VisibleText(nm.view())).x + g.style.framePadding.x * 2.0f + buttons);
     }
     if (maxHeight > 0.0f && size.y > maxHeight) {
         size.y = maxHeight;
@@ -988,6 +989,16 @@ const DrawData& Ui::Render() {
     g.drawData.lists = g.renderLists.data();
     g.drawData.listCount = uint32_t(g.renderLists.size());
     g.drawData.displaySize = g.input.displaySize;  // the target, in pixels
+
+    // The per-frame scratch buffers held caller data (formatted slider/label text, the password mask). Every glyph is
+    // already baked into the draw lists above, so nothing still points at these - wipe the plaintext now rather than
+    // leave this frame's text resident until the next one overwrites it.
+    detail::ObfWipe(g.formatBuffer, sizeof(g.formatBuffer));
+    if (!g.scratchText.empty()) {
+        detail::ObfWipe(g.scratchText.data(), static_cast<unsigned>(g.scratchText.size()));
+        g.scratchText.clear();
+    }
+
     g.withinFrame = false;
     return g.drawData;
 }
@@ -1376,7 +1387,8 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
                 textMaxX = closeRect.min.x - style.itemInnerSpacing.x;
             }
             const Rect textRect(textMinX, title.min.y, textMaxX, title.max.y);
-            RenderTextAligned(g, textRect, VisibleText(w->name), {0.0f, 0.5f}, &textRect, nullptr, titleText);
+            const auto nm = w->name.decode();
+            RenderTextAligned(g, textRect, VisibleText(nm.view()), {0.0f, 0.5f}, &textRect, nullptr, titleText);
         }
         if (w->menuBarHeight > 0.0f && !w->collapsed) {
             const float top = w->titleBarHeight > 0.0f ? 0.0f : innerRounding;
@@ -1456,7 +1468,8 @@ bool Ui::BeginChild(std::string_view strId, Vec2 size, bool border, uint32_t fla
     if (s.x <= 0.0f) s.x = std::max(avail.x + s.x, 4.0f);
     if (s.y <= 0.0f) s.y = std::max(avail.y + s.y, 4.0f);
     char name[512];
-    std::snprintf(name, sizeof(name), DZ_STR("%s/%.*s_%08X"), parent->name.c_str(), int(strId.size()), strId.data(), id);
+    const auto pn = parent->name.decode();
+    std::snprintf(name, sizeof(name), DZ_STR("%s/%.*s_%08X"), pn.c_str(), int(strId.size()), strId.data(), id);
     g.nextWindow.hasPos = true;
     g.nextWindow.pos = parent->cursorPos;
     g.nextWindow.posCond = Cond::Always;
@@ -2000,7 +2013,8 @@ std::string Ui::SaveIniSettings() const {
         if (w->flags & (kWindowChild | kWindowPopup | kWindowTooltip | WindowFlags::NoSavedSettings)) continue;
         if (w->lastFrameActive < 0 || w->name.empty()) continue;
         WindowSettings& s = g.windowSettings[w->id];
-        s.name = w->name;
+        const auto wn = w->name.decode();
+        s.name.assign(wn.view().data(), wn.view().size());
         s.pos = w->pos;
         s.size = w->sizeFull;
         s.collapsed = w->collapsed;

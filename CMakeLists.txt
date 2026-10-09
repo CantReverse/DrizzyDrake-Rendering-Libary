@@ -73,6 +73,7 @@ add_library(drizzy_core STATIC
   include/drizzy/draw_list.h
   include/drizzy/font.h
   include/drizzy/ui.h
+  include/drizzy/secure_string.h
   include/drizzy/debug_draw.h
   include/drizzy/overlay_common.h
   src/draw_list.cpp

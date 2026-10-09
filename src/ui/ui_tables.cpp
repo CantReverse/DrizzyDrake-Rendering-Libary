@@ -34,7 +34,8 @@ void ComputeColumnX(UiState& g, TableState& t) {
         if (c.flags & TableColumnFlags::WidthFixed) {
             if (c.width <= 0.0f) {
                 // Fit the header: label, padding, and room for a sort arrow.
-                c.width = std::max(TextSize(g, VisibleText(c.label)).x + g.style.cellPadding.x * 2.0f +
+                const auto lbl = c.label.decode();
+                c.width = std::max(TextSize(g, VisibleText(lbl.view())).x + g.style.cellPadding.x * 2.0f +
                                        ((t.flags & TableFlags::Sortable) ? g.fontSize : 0.0f),
                                    kMinColumnWidth * 2.0f);
             }
@@ -308,7 +309,7 @@ void Ui::TableSetupColumn(std::string_view label, uint32_t flags, float widthOrW
     if (!t || t->layoutDone || t->setupCount >= int(t->columns.size())) return;
     const int index = t->setupCount++;
     TableColumn& c = t->columns[size_t(index)];
-    c.label.assign(label.data(), label.size());
+    c.label.assign(label);
     if (!(flags & (TableColumnFlags::WidthFixed | TableColumnFlags::WidthStretch))) flags |= TableColumnFlags::WidthStretch;
     const bool modeChanged = (c.flags & TableColumnFlags::WidthFixed) != (flags & TableColumnFlags::WidthFixed);
     if (!c.initialized || modeChanged) {
@@ -376,7 +377,8 @@ void Ui::TableHeadersRow() {
         const UiColor bg = held && hovered ? UiColor::HeaderActive : hovered ? UiColor::HeaderHovered
                                                                               : UiColor::TableHeaderBg;
         dl.AddRectFilled(cell, StyleColor(g, bg));
-        RenderText(g, {c.x0 + pad.x, t->headerTop + pad.y}, VisibleText(c.label), StyleColor(g, UiColor::Text));
+        const auto lbl = c.label.decode();
+        RenderText(g, {c.x0 + pad.x, t->headerTop + pad.y}, VisibleText(lbl.view()), StyleColor(g, UiColor::Text));
         if (sortable && t->sort.column == i) {
             RenderArrow(g, {c.x1 - pad.x - g.fontSize * 0.35f, (t->headerTop + t->headerBottom) * 0.5f},
                         g.fontSize * 0.45f, t->sort.descending ? 1 : 3, StyleColor(g, UiColor::Text));

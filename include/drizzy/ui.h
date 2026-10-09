@@ -26,6 +26,7 @@
 
 #include "drizzy/draw_list.h"
 #include "drizzy/font.h"
+#include "drizzy/secure_string.h"  // DZ_ENCRYPT: encrypt the string literals your game passes to drizzy (optional)
 
 #include <cfloat>
 #include <memory>

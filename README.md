@@ -180,12 +180,37 @@ empty. A string is decrypted only at the moment it is used, into a small buffer 
 soon as it leaves scope, so a plaintext copy is never resident between uses. Nothing is decrypted in the per-frame draw
 path, so there is no runtime cost to speak of (the Classic look still renders in the same 506 primitives).
 
+The library also no longer keeps a readable copy of the **labels you pass in**. The few it has to retain across frames
+— window titles, table column headers, notification text — are held XOR-encrypted at rest (keyed from a process-random
+seed, so the bytes differ run to run) and decoded into an auto-wiped buffer only to measure or draw them. So a label
+you encrypt stays encrypted on drizzy's side too, instead of reappearing in plaintext inside a window's `name` string.
+
+### Encrypting the labels your game passes in
+
+The literal text your game hands to drizzy lives in *your* binary, so `strings` on your game still reveals it unless
+you encrypt it too. Wrap such a literal in `DZ_ENCRYPT` (from `drizzy/secure_string.h`, pulled in by `drizzy/ui.h`):
+it is XORed at compile time, so the plaintext never appears in your binary image, and is decrypted only for the
+duration of the call, into a buffer that is wiped as soon as the call returns:
+
+```cpp
+if (ui.Begin(DZ_ENCRYPT("Settings"))) {
+    if (ui.Button(DZ_ENCRYPT("Apply"))) Apply();
+    ui.Text(DZ_ENCRYPT("Teleport"));
+}
+```
+
+`DZ_ENCRYPT` yields a value convertible to `std::string_view` / `const char*`, so it passes straight to any drizzy call
+that takes a label. Use it inline as an argument; never store the pointer (it is wiped at the end of the full
+expression), and pass only string **literals** — text your game builds at runtime (`std::format`, a player name, typed
+input) can't be encrypted at compile time, and your own code holds it in plaintext before drizzy ever sees it. Unlike
+the library's own literals, `DZ_ENCRYPT` is always on: it is opt-in by writing the macro, so `DRIZZY_ENCRYPT_STRINGS`
+(which only governs the library's internal literals) does not turn it off.
+
 This is obfuscation, not encryption-as-security: the key ships inside the binary, so it raises the cost of static
-reverse engineering and defeats casual memory scans, but a debugger on the decode site can still recover the text. It
-covers the library's own literals; the labels your game passes to drizzy live in your binary and are yours to protect.
-The helper lives in `src/ui/obfuscate.h` (`DZ_STR` for inline literals, `DZ_OBF` for constant name tables), and
-`tools/check_encrypted_strings.py <binary>` fails if any library plaintext survives in a build. Turn the option off to
-keep the strings readable while debugging.
+reverse engineering and defeats casual memory scans, but a debugger on the decode site can still recover the text.
+The library's own helper lives in `src/ui/obfuscate.h` (`DZ_STR` for inline literals, `DZ_OBF` for constant name
+tables, `SecureString` for retained copies), and `tools/check_encrypted_strings.py <binary>` fails if any library
+plaintext survives in a build. Turn the option off to keep the library's strings readable while debugging.
 
 ## Getting started
 
