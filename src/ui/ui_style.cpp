@@ -16,40 +16,40 @@ using namespace ui_detail;
 
 namespace {
 
-// Indexed by UiStyleVar; the names double as theme file keys.
+// Indexed by UiStyleVar; the names double as theme file keys. Names are encrypted (detail::ObfEntry).
 const VarInfo kVarInfo[] = {
-    {"alpha", 1, offsetof(UiStyle, alpha)},
-    {"windowPadding", 2, offsetof(UiStyle, windowPadding)},
-    {"windowRounding", 1, offsetof(UiStyle, windowRounding)},
-    {"windowBorderSize", 1, offsetof(UiStyle, windowBorderSize)},
-    {"windowShadowSize", 1, offsetof(UiStyle, windowShadowSize)},
-    {"windowMinSize", 2, offsetof(UiStyle, windowMinSize)},
-    {"framePadding", 2, offsetof(UiStyle, framePadding)},
-    {"frameRounding", 1, offsetof(UiStyle, frameRounding)},
-    {"frameBorderSize", 1, offsetof(UiStyle, frameBorderSize)},
-    {"itemSpacing", 2, offsetof(UiStyle, itemSpacing)},
-    {"itemInnerSpacing", 2, offsetof(UiStyle, itemInnerSpacing)},
-    {"indentSpacing", 1, offsetof(UiStyle, indentSpacing)},
-    {"scrollbarSize", 1, offsetof(UiStyle, scrollbarSize)},
-    {"scrollbarRounding", 1, offsetof(UiStyle, scrollbarRounding)},
-    {"grabMinSize", 1, offsetof(UiStyle, grabMinSize)},
-    {"grabRounding", 1, offsetof(UiStyle, grabRounding)},
-    {"popupRounding", 1, offsetof(UiStyle, popupRounding)},
-    {"tabRounding", 1, offsetof(UiStyle, tabRounding)},
-    {"buttonTextAlign", 2, offsetof(UiStyle, buttonTextAlign)},
-    {"cellPadding", 2, offsetof(UiStyle, cellPadding)},
-    {"glowSize", 1, offsetof(UiStyle, glowSize)},
-    {"gradient", 1, offsetof(UiStyle, gradient)},
-    {"bevel", 1, offsetof(UiStyle, bevel)},
-    {"hardShadow", 2, offsetof(UiStyle, hardShadow)},
-    {"knobShadow", 1, offsetof(UiStyle, knobShadow)},
+    {DZ_OBF("alpha"), 1, offsetof(UiStyle, alpha)},
+    {DZ_OBF("windowPadding"), 2, offsetof(UiStyle, windowPadding)},
+    {DZ_OBF("windowRounding"), 1, offsetof(UiStyle, windowRounding)},
+    {DZ_OBF("windowBorderSize"), 1, offsetof(UiStyle, windowBorderSize)},
+    {DZ_OBF("windowShadowSize"), 1, offsetof(UiStyle, windowShadowSize)},
+    {DZ_OBF("windowMinSize"), 2, offsetof(UiStyle, windowMinSize)},
+    {DZ_OBF("framePadding"), 2, offsetof(UiStyle, framePadding)},
+    {DZ_OBF("frameRounding"), 1, offsetof(UiStyle, frameRounding)},
+    {DZ_OBF("frameBorderSize"), 1, offsetof(UiStyle, frameBorderSize)},
+    {DZ_OBF("itemSpacing"), 2, offsetof(UiStyle, itemSpacing)},
+    {DZ_OBF("itemInnerSpacing"), 2, offsetof(UiStyle, itemInnerSpacing)},
+    {DZ_OBF("indentSpacing"), 1, offsetof(UiStyle, indentSpacing)},
+    {DZ_OBF("scrollbarSize"), 1, offsetof(UiStyle, scrollbarSize)},
+    {DZ_OBF("scrollbarRounding"), 1, offsetof(UiStyle, scrollbarRounding)},
+    {DZ_OBF("grabMinSize"), 1, offsetof(UiStyle, grabMinSize)},
+    {DZ_OBF("grabRounding"), 1, offsetof(UiStyle, grabRounding)},
+    {DZ_OBF("popupRounding"), 1, offsetof(UiStyle, popupRounding)},
+    {DZ_OBF("tabRounding"), 1, offsetof(UiStyle, tabRounding)},
+    {DZ_OBF("buttonTextAlign"), 2, offsetof(UiStyle, buttonTextAlign)},
+    {DZ_OBF("cellPadding"), 2, offsetof(UiStyle, cellPadding)},
+    {DZ_OBF("glowSize"), 1, offsetof(UiStyle, glowSize)},
+    {DZ_OBF("gradient"), 1, offsetof(UiStyle, gradient)},
+    {DZ_OBF("bevel"), 1, offsetof(UiStyle, bevel)},
+    {DZ_OBF("hardShadow"), 2, offsetof(UiStyle, hardShadow)},
+    {DZ_OBF("knobShadow"), 1, offsetof(UiStyle, knobShadow)},
 };
 static_assert(sizeof(kVarInfo) / sizeof(kVarInfo[0]) == size_t(UiStyleVar::Count), "kVarInfo must match UiStyleVar");
 
 // Theme keys that are not style vars.
 const VarInfo kExtraKeys[] = {
-    {"fontSize", 1, offsetof(UiStyle, fontSize)},
-    {"disabledAlpha", 1, offsetof(UiStyle, disabledAlpha)},
+    {DZ_OBF("fontSize"), 1, offsetof(UiStyle, fontSize)},
+    {DZ_OBF("disabledAlpha"), 1, offsetof(UiStyle, disabledAlpha)},
 };
 
 // Style values that are proportions, not sizes: ScaleAllSizes leaves them alone.
@@ -59,45 +59,50 @@ bool IsUnitless(size_t offset) {
            offset == offsetof(UiStyle, knobShadow);
 }
 
-// The shape settings: one-byte enums, written to theme files by name.
+// The shape settings: one-byte enums, written to theme files by name. Names are encrypted (detail::ObfEntry).
 struct ShapeInfo {
-    const char* name;
+    detail::ObfEntry name;
     size_t offset;
-    const char* const* values;
+    const detail::ObfEntry* values;
     uint8_t count;
 };
-const char* const kFrameShapes[] = {"Filled", "Outline", "Underline"};
-const char* const kButtonShapes[] = {"Filled", "Outline"};
-const char* const kSliderShapes[] = {"Block", "Rail", "Fill", "Segments"};
-const char* const kCheckShapes[] = {"Check", "Fill", "Square"};
-const char* const kToggleShapes[] = {"Pill", "Thin", "Square"};
-const char* const kTabShapes[] = {"Tab", "Underline", "Pill", "Box"};
-const char* const kTitleShapes[] = {"Bar", "Accent", "Plain", "Solid"};
+const detail::ObfEntry kFrameShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline"), DZ_OBF("Underline")};
+const detail::ObfEntry kButtonShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline")};
+const detail::ObfEntry kSliderShapes[] = {DZ_OBF("Block"), DZ_OBF("Rail"), DZ_OBF("Fill"), DZ_OBF("Segments")};
+const detail::ObfEntry kCheckShapes[] = {DZ_OBF("Check"), DZ_OBF("Fill"), DZ_OBF("Square")};
+const detail::ObfEntry kToggleShapes[] = {DZ_OBF("Pill"), DZ_OBF("Thin"), DZ_OBF("Square")};
+const detail::ObfEntry kTabShapes[] = {DZ_OBF("Tab"), DZ_OBF("Underline"), DZ_OBF("Pill"), DZ_OBF("Box")};
+const detail::ObfEntry kTitleShapes[] = {DZ_OBF("Bar"), DZ_OBF("Accent"), DZ_OBF("Plain"), DZ_OBF("Solid")};
 const ShapeInfo kShapeInfo[] = {
-    {"frameShape", offsetof(UiStyle, frameShape), kFrameShapes, 3},
-    {"buttonShape", offsetof(UiStyle, buttonShape), kButtonShapes, 2},
-    {"sliderShape", offsetof(UiStyle, sliderShape), kSliderShapes, 4},
-    {"checkShape", offsetof(UiStyle, checkShape), kCheckShapes, 3},
-    {"toggleShape", offsetof(UiStyle, toggleShape), kToggleShapes, 3},
-    {"tabShape", offsetof(UiStyle, tabShape), kTabShapes, 4},
-    {"titleShape", offsetof(UiStyle, titleShape), kTitleShapes, 4},
+    {DZ_OBF("frameShape"), offsetof(UiStyle, frameShape), kFrameShapes, 3},
+    {DZ_OBF("buttonShape"), offsetof(UiStyle, buttonShape), kButtonShapes, 2},
+    {DZ_OBF("sliderShape"), offsetof(UiStyle, sliderShape), kSliderShapes, 4},
+    {DZ_OBF("checkShape"), offsetof(UiStyle, checkShape), kCheckShapes, 3},
+    {DZ_OBF("toggleShape"), offsetof(UiStyle, toggleShape), kToggleShapes, 3},
+    {DZ_OBF("tabShape"), offsetof(UiStyle, tabShape), kTabShapes, 4},
+    {DZ_OBF("titleShape"), offsetof(UiStyle, titleShape), kTitleShapes, 4},
 };
 
-const char* const kColorNames[] = {
-    "Text", "TextDisabled", "WindowBg", "ChildBg", "PopupBg", "Border", "WindowShadow", "FrameBg",
-    "FrameBgHovered", "FrameBgActive", "TitleBg", "TitleBgActive", "ScrollbarBg", "ScrollbarGrab",
-    "ScrollbarGrabHovered", "ScrollbarGrabActive", "CheckMark", "SliderGrab", "SliderGrabActive", "Button",
-    "ButtonHovered", "ButtonActive", "Header", "HeaderHovered", "HeaderActive", "Separator", "ResizeGrip",
-    "ResizeGripHovered", "ResizeGripActive", "Tab", "TabHovered", "TabActive", "PlotLines", "PlotHistogram",
-    "TextSelectedBg", "ModalDimBg", "MenuBarBg", "TableHeaderBg", "TableBorder", "TableRowBg", "TableRowBgAlt",
-    "Glow", "AccentText",
+const detail::ObfEntry kColorNames[] = {
+    DZ_OBF("Text"), DZ_OBF("TextDisabled"), DZ_OBF("WindowBg"), DZ_OBF("ChildBg"), DZ_OBF("PopupBg"), DZ_OBF("Border"),
+    DZ_OBF("WindowShadow"), DZ_OBF("FrameBg"), DZ_OBF("FrameBgHovered"), DZ_OBF("FrameBgActive"), DZ_OBF("TitleBg"),
+    DZ_OBF("TitleBgActive"), DZ_OBF("ScrollbarBg"), DZ_OBF("ScrollbarGrab"), DZ_OBF("ScrollbarGrabHovered"),
+    DZ_OBF("ScrollbarGrabActive"), DZ_OBF("CheckMark"), DZ_OBF("SliderGrab"), DZ_OBF("SliderGrabActive"),
+    DZ_OBF("Button"), DZ_OBF("ButtonHovered"), DZ_OBF("ButtonActive"), DZ_OBF("Header"), DZ_OBF("HeaderHovered"),
+    DZ_OBF("HeaderActive"), DZ_OBF("Separator"), DZ_OBF("ResizeGrip"), DZ_OBF("ResizeGripHovered"),
+    DZ_OBF("ResizeGripActive"), DZ_OBF("Tab"), DZ_OBF("TabHovered"), DZ_OBF("TabActive"), DZ_OBF("PlotLines"),
+    DZ_OBF("PlotHistogram"), DZ_OBF("TextSelectedBg"), DZ_OBF("ModalDimBg"), DZ_OBF("MenuBarBg"),
+    DZ_OBF("TableHeaderBg"), DZ_OBF("TableBorder"), DZ_OBF("TableRowBg"), DZ_OBF("TableRowBgAlt"), DZ_OBF("Glow"),
+    DZ_OBF("AccentText"),
 };
 static_assert(sizeof(kColorNames) / sizeof(kColorNames[0]) == size_t(UiColor::Count), "kColorNames must match UiColor");
 
-const char* const kThemeNames[] = {"Dark", "Light", "Obsidian", "Cyberpunk", "Nord", "Emerald", "Crimson", "Dracula",
-                                   "Sakura"};
+const detail::ObfEntry kThemeNames[] = {DZ_OBF("Dark"), DZ_OBF("Light"), DZ_OBF("Obsidian"), DZ_OBF("Cyberpunk"),
+                                        DZ_OBF("Nord"), DZ_OBF("Emerald"), DZ_OBF("Crimson"), DZ_OBF("Dracula"),
+                                        DZ_OBF("Sakura")};
 static_assert(sizeof(kThemeNames) / sizeof(kThemeNames[0]) == size_t(UiTheme::Count), "kThemeNames must match UiTheme");
-const char* const kLookNames[] = {"Classic", "Soft", "Neon", "Flat", "Retro", "Glass"};
+const detail::ObfEntry kLookNames[] = {DZ_OBF("Classic"), DZ_OBF("Soft"), DZ_OBF("Neon"),
+                                       DZ_OBF("Flat"), DZ_OBF("Retro"), DZ_OBF("Glass")};
 static_assert(sizeof(kLookNames) / sizeof(kLookNames[0]) == size_t(UiLook::Count), "kLookNames must match UiLook");
 
 std::string_view Trim(std::string_view s) {
@@ -116,12 +121,17 @@ bool EqualsNoCase(std::string_view a, std::string_view b) {
     return true;
 }
 
-// Index of `name` in `names` (case-insensitive), or -1.
-int FindName(std::string_view name, const char* const* names, int count) {
-    for (int i = 0; i < count; ++i) {
-        if (EqualsNoCase(name, names[i])) return i;
+// Index of `name` in `names` (case-insensitive), or -1. Decodes each encrypted entry into a scratch buffer, which is
+// wiped before returning so the plaintext does not linger.
+int FindName(std::string_view name, const detail::ObfEntry* names, int count) {
+    char buf[detail::kObfCap];
+    int found = -1;
+    for (int i = 0; i < count && found < 0; ++i) {
+        detail::ObfDecode(names[i], buf);
+        if (EqualsNoCase(name, std::string_view(buf, names[i].len))) found = i;
     }
-    return -1;
+    detail::ObfWipe(buf, detail::kObfCap);
+    return found;
 }
 
 // "#RRGGBB" or "#RRGGBBAA"
@@ -394,11 +404,11 @@ UiStyle UiStyle::Make(UiTheme theme, UiLook look) {
 }
 
 const char* UiStyle::ThemeName(UiTheme theme) {
-    return size_t(theme) < size_t(UiTheme::Count) ? kThemeNames[size_t(theme)] : "";
+    return size_t(theme) < size_t(UiTheme::Count) ? detail::ObfGet(kThemeNames[size_t(theme)]) : "";
 }
 
 const char* UiStyle::LookName(UiLook look) {
-    return size_t(look) < size_t(UiLook::Count) ? kLookNames[size_t(look)] : "";
+    return size_t(look) < size_t(UiLook::Count) ? detail::ObfGet(kLookNames[size_t(look)]) : "";
 }
 
 UiPalette UiStyle::ThemePalette(UiTheme theme) {
@@ -522,8 +532,8 @@ void UiStyle::ScaleAllSizes(float scale) {
     }
 }
 
-const char* UiStyle::ColorName(UiColor color) { return kColorNames[size_t(color)]; }
-const char* UiStyle::VarName(UiStyleVar var) { return kVarInfo[size_t(var)].name; }
+const char* UiStyle::ColorName(UiColor color) { return detail::ObfGet(kColorNames[size_t(color)]); }
+const char* UiStyle::VarName(UiStyleVar var) { return detail::ObfGet(kVarInfo[size_t(var)].name); }
 
 bool UiStyle::LoadTheme(std::string_view text, std::string* error) {
     bool ok = true;
@@ -532,7 +542,7 @@ bool UiStyle::LoadTheme(std::string_view text, std::string* error) {
         ok = false;
         if (!error) return;
         char prefix[64];
-        std::snprintf(prefix, sizeof(prefix), "line %d: %s: ", lineNumber, what);
+        std::snprintf(prefix, sizeof(prefix), DZ_STR("line %d: %s: "), lineNumber, what);
         *error += prefix;
         *error += line;
         *error += '\n';
@@ -546,57 +556,60 @@ bool UiStyle::LoadTheme(std::string_view text, std::string* error) {
         if (Trim(line).empty() || Trim(line).front() == '#') continue;
         const size_t eq = line.find('=');
         if (eq == std::string_view::npos) {
-            report("expected 'name = value'", line);
+            report(DZ_STR("expected 'name = value'"), line);
             continue;
         }
         const std::string_view key = Trim(line.substr(0, eq));
         const std::string_view value = Trim(line.substr(eq + 1));
 
-        if (key.substr(0, 6) == "color.") {
+        if (key.substr(0, 6) == DZ_STR("color.")) {
             const std::string_view name = key.substr(6);
             size_t index = size_t(UiColor::Count);
             for (size_t i = 0; i < size_t(UiColor::Count); ++i) {
-                if (name == kColorNames[i]) index = i;
+                if (detail::ObfEq(kColorNames[i], name)) index = i;
             }
             Color color;
-            if (index == size_t(UiColor::Count)) report("unknown color", line);
-            else if (!ParseHexColor(value, color)) report("expected #RRGGBB or #RRGGBBAA", line);
+            if (index == size_t(UiColor::Count)) report(DZ_STR("unknown color"), line);
+            else if (!ParseHexColor(value, color)) report(DZ_STR("expected #RRGGBB or #RRGGBBAA"), line);
             else colors[index] = color;
             continue;
         }
-        if (key == "theme" || key == "look") {
-            const bool isTheme = key == "theme";
+        if (key == DZ_STR("theme") || key == DZ_STR("look")) {
+            const bool isTheme = key == DZ_STR("theme");
             const int index = isTheme ? FindName(value, kThemeNames, int(UiTheme::Count))
                                       : FindName(value, kLookNames, int(UiLook::Count));
-            if (index < 0) report(isTheme ? "unknown theme" : "unknown look", line);
-            else if (isTheme) ApplyTheme(UiTheme(index));
+            if (index < 0) {
+                if (isTheme) report(DZ_STR("unknown theme"), line);
+                else report(DZ_STR("unknown look"), line);
+            } else if (isTheme) ApplyTheme(UiTheme(index));
             else ApplyLook(UiLook(index));
             continue;
         }
         const ShapeInfo* shape = nullptr;
         for (const ShapeInfo& s : kShapeInfo) {
-            if (key == s.name) shape = &s;
+            if (detail::ObfEq(s.name, key)) shape = &s;
         }
         if (shape) {
             const int index = FindName(value, shape->values, shape->count);
-            if (index < 0) report("unknown shape", line);
+            if (index < 0) report(DZ_STR("unknown shape"), line);
             else *(reinterpret_cast<uint8_t*>(this) + shape->offset) = uint8_t(index);
             continue;
         }
         const VarInfo* info = nullptr;
         for (const VarInfo& v : kVarInfo) {
-            if (key == v.name) info = &v;
+            if (detail::ObfEq(v.name, key)) info = &v;
         }
         for (const VarInfo& v : kExtraKeys) {
-            if (key == v.name) info = &v;
+            if (detail::ObfEq(v.name, key)) info = &v;
         }
         if (!info) {
-            report("unknown setting", line);
+            report(DZ_STR("unknown setting"), line);
             continue;
         }
         float values[2];
         if (ParseFloats(value, values, 2) != info->count) {
-            report(info->count == 2 ? "expected two numbers 'x, y'" : "expected a number", line);
+            if (info->count == 2) report(DZ_STR("expected two numbers 'x, y'"), line);
+            else report(DZ_STR("expected a number"), line);
             continue;
         }
         float* field = reinterpret_cast<float*>(reinterpret_cast<char*>(this) + info->offset);
@@ -606,25 +619,26 @@ bool UiStyle::LoadTheme(std::string_view text, std::string* error) {
 }
 
 std::string UiStyle::SaveTheme() const {
-    std::string out = "# drizzy_renderer UI theme\n";
+    std::string out(DZ_STR("# drizzy_renderer UI theme\n"));
     char line[128];
     auto writeVar = [&](const VarInfo& info) {
         const float* field = reinterpret_cast<const float*>(reinterpret_cast<const char*>(this) + info.offset);
-        if (info.count == 2) std::snprintf(line, sizeof(line), "%s = %g, %g\n", info.name, double(field[0]), double(field[1]));
-        else std::snprintf(line, sizeof(line), "%s = %g\n", info.name, double(field[0]));
+        if (info.count == 2) std::snprintf(line, sizeof(line), DZ_STR("%s = %g, %g\n"), detail::ObfGet(info.name), double(field[0]), double(field[1]));
+        else std::snprintf(line, sizeof(line), DZ_STR("%s = %g\n"), detail::ObfGet(info.name), double(field[0]));
         out += line;
     };
     for (const VarInfo& info : kExtraKeys) writeVar(info);
     for (const VarInfo& info : kVarInfo) writeVar(info);
     for (const ShapeInfo& shape : kShapeInfo) {
         const uint8_t value = *(reinterpret_cast<const uint8_t*>(this) + shape.offset);
-        std::snprintf(line, sizeof(line), "%s = %s\n", shape.name, shape.values[value < shape.count ? value : 0]);
+        const char* shapeName = detail::ObfGet(shape.name);
+        std::snprintf(line, sizeof(line), DZ_STR("%s = %s\n"), shapeName, detail::ObfGet(shape.values[value < shape.count ? value : 0]));
         out += line;
     }
     for (size_t i = 0; i < size_t(UiColor::Count); ++i) {
         const Color c = colors[i];
-        std::snprintf(line, sizeof(line), "color.%s = #%02X%02X%02X%02X\n", kColorNames[i], c & 0xFFu, (c >> 8) & 0xFFu,
-                      (c >> 16) & 0xFFu, c >> 24);
+        std::snprintf(line, sizeof(line), DZ_STR("color.%s = #%02X%02X%02X%02X\n"), detail::ObfGet(kColorNames[i]),
+                      c & 0xFFu, (c >> 8) & 0xFFu, (c >> 16) & 0xFFu, c >> 24);
         out += line;
     }
     return out;

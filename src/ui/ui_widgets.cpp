@@ -340,7 +340,7 @@ void PlotImpl(Ui& ui, UiState& g, std::string_view label, const float* values, i
     }
     if (hoveredIndex >= 0) {
         char tip[64];
-        std::snprintf(tip, sizeof(tip), "%d: %.4g", hoveredIndex, double(valueAt(hoveredIndex)));
+        std::snprintf(tip, sizeof(tip), DZ_STR("%d: %.4g"), hoveredIndex, double(valueAt(hoveredIndex)));
         ui.SetTooltip(tip);
     }
 }
@@ -608,7 +608,7 @@ void Ui::ProgressBar(float fraction, Vec2 sizeArg, std::string_view overlay) {
         RenderFrame(g, fill, fillColor, false, rounding);
         fillEnd = fill.max.x;
     }
-    const std::string_view text = overlay.empty() ? std::string_view(FormatNumber(g, "%.0f%%", double(fraction * 100.0f)))
+    const std::string_view text = overlay.empty() ? std::string_view(FormatNumber(g, DZ_STR("%.0f%%"), double(fraction * 100.0f)))
                                                   : overlay;
     RenderTextOverFill(g, bb, text, fillEnd);
 }

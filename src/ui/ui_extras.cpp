@@ -191,7 +191,7 @@ bool Ui::TextLink(std::string_view label) {
 }
 
 void Ui::HelpMarker(std::string_view text) {
-    TextDisabled("(?)");
+    TextDisabled(DZ_STR("(?)"));
     if (IsItemHovered()) SetTooltip(text);
 }
 
@@ -200,23 +200,23 @@ void Ui::HelpMarker(std::string_view text) {
 // =====================================================================================================================
 bool Ui::SliderFloatN(std::string_view label, float* values, int count, float min, float max, const char* format) {
     return MultiComponent(*this, *m, label, count,
-                          [&](int i) { return SliderFloat("##v", &values[i], min, max, format); });
+                          [&](int i) { return SliderFloat(DZ_STR("##v"), &values[i], min, max, format); });
 }
 
 bool Ui::SliderIntN(std::string_view label, int* values, int count, int min, int max, const char* format) {
     return MultiComponent(*this, *m, label, count,
-                          [&](int i) { return SliderInt("##v", &values[i], min, max, format); });
+                          [&](int i) { return SliderInt(DZ_STR("##v"), &values[i], min, max, format); });
 }
 
 bool Ui::DragFloatN(std::string_view label, float* values, int count, float speed, float min, float max,
                     const char* format) {
     return MultiComponent(*this, *m, label, count,
-                          [&](int i) { return DragFloat("##v", &values[i], speed, min, max, format); });
+                          [&](int i) { return DragFloat(DZ_STR("##v"), &values[i], speed, min, max, format); });
 }
 
 bool Ui::DragIntN(std::string_view label, int* values, int count, float speed, int min, int max, const char* format) {
     return MultiComponent(*this, *m, label, count,
-                          [&](int i) { return DragInt("##v", &values[i], speed, min, max, format); });
+                          [&](int i) { return DragInt(DZ_STR("##v"), &values[i], speed, min, max, format); });
 }
 
 bool Ui::SliderAngle(std::string_view label, float* radians, float minDegrees, float maxDegrees, const char* format) {
@@ -231,7 +231,7 @@ bool Ui::SliderAngle(std::string_view label, float* radians, float minDegrees, f
 // =====================================================================================================================
 bool TextFilter::Draw(Ui& ui, std::string_view label, float width) {
     if (width != 0.0f) ui.SetNextItemWidth(width);
-    const bool changed = ui.InputTextWithHint(label, "include,-exclude", m_text, sizeof(m_text));
+    const bool changed = ui.InputTextWithHint(label, DZ_STR("include,-exclude"), m_text, sizeof(m_text));
     if (changed) Parse();
     return changed;
 }

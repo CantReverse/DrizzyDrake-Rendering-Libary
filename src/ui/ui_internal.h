@@ -3,6 +3,8 @@
 
 #include "drizzy/ui.h"
 
+#include "obfuscate.h"
+
 #include <cstdarg>
 #include <memory>
 #include <string>
@@ -256,7 +258,7 @@ struct FontMod {
 };
 
 struct VarInfo {
-    const char* name;
+    drizzy::detail::ObfEntry name;  // encrypted; decode with detail::ObfEq / detail::ObfGet
     uint8_t count;   // 1 = float, 2 = Vec2
     size_t offset;   // into UiStyle
 };

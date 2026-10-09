@@ -264,7 +264,7 @@ bool Ui::BeginTable(std::string_view strId, int columns, uint32_t flags, Vec2 ou
                              : outerSize.y < 0.0f ? std::max(avail.y + outerSize.y, CellHeight(g) * 3.0f)
                                                   : CellHeight(g) * 10.0f;
         char name[32];
-        std::snprintf(name, sizeof(name), "##table_%08X", id);
+        std::snprintf(name, sizeof(name), DZ_STR("##table_%08X"), id);
         if (!BeginChild(name, {width, height}, false)) {
             EndChild();
             return false;

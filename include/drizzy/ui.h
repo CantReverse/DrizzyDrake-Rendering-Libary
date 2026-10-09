@@ -319,6 +319,9 @@ struct UiStyle {
     void ApplyLook(UiLook look);
     void ApplyPalette(const UiPalette& palette);  // a theme of your own from a few colors
     static UiPalette ThemePalette(UiTheme theme);  // the colors a built-in theme is made from (Dark/Light: approximate)
+    // The built-in name for a theme or look. With DRIZZY_ENCRYPT_STRINGS on (the default) these names are encrypted in
+    // memory, so the returned pointer is a decrypted copy in a small rotating per-thread buffer: use or copy it right
+    // away; it stays valid for the next few dozen of these name calls on the same thread, not indefinitely.
     static const char* ThemeName(UiTheme theme);
     static const char* LookName(UiLook look);
 
@@ -333,8 +336,8 @@ struct UiStyle {
     bool LoadTheme(std::string_view text, std::string* error = nullptr);
     std::string SaveTheme() const;
 
-    static const char* ColorName(UiColor color);
-    static const char* VarName(UiStyleVar var);
+    static const char* ColorName(UiColor color);  // returned pointer: see the note on ThemeName
+    static const char* VarName(UiStyleVar var);    // returned pointer: see the note on ThemeName
 };
 
 // Input for one frame, filled by the host before Ui::NewFrame().

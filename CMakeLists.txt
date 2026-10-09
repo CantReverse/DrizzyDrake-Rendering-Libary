@@ -16,6 +16,12 @@ option(DRIZZY_ENABLE_LTO           "Link-time code generation in optimized build
 # AVX2 code generation. Faster vector code, but the program then needs a CPU from 2013 or later (Intel Haswell / AMD
 # Excavator); an older CPU crashes with an illegal instruction. Only enable it when every player's machine has AVX2.
 option(DRIZZY_ENABLE_AVX2          "Compile for AVX2 (/arch:AVX2)"                     OFF)
+# Encrypt the library's own string literals (theme/color names, format strings, widget ids) with a per-string XOR
+# keystream generated at compile time, decoded on use into a buffer that is wiped as soon as it leaves scope. The
+# plaintext never appears in the binary image, so `strings` and at-rest memory scans come up empty. This is the
+# default; turn it off to keep the plaintext readable while debugging. (Obfuscation, not security: the key ships in
+# the binary, so a debugger on the decode site still recovers the text.)
+option(DRIZZY_ENCRYPT_STRINGS      "Encrypt string literals in memory (decode-on-use)" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +49,10 @@ target_compile_options(drizzy_options INTERFACE
   $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive- /utf-8 /Zc:__cplusplus /MP>
   $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<NOT:$<CONFIG:Debug>>>:/Gw>
   $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<BOOL:${DRIZZY_ENABLE_AVX2}>>:/arch:AVX2>)
+# In-memory string encryption, on by default. Defined on every target so a table encoded in one translation unit is
+# decoded with the same setting everywhere.
+target_compile_definitions(drizzy_options INTERFACE
+  DRIZZY_ENCRYPT_STRINGS=$<IF:$<BOOL:${DRIZZY_ENCRYPT_STRINGS}>,1,0>)
 
 set(DRIZZY_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${DRIZZY_GENERATED_DIR}")

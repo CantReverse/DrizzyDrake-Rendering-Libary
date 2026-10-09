@@ -171,6 +171,22 @@ records, with the miters computed in the vertex shader. Labels that overflow a w
 CPU, so they need no extra clip rect or draw call. The UI writes its records straight into mapped GPU memory as it
 builds them, so there is nothing left to copy at render time.
 
+## Strings are encrypted in memory
+
+By default (`DRIZZY_ENCRYPT_STRINGS`), the library's own string literals — theme and color names, the theme-file
+format, error messages, internal widget ids — are not stored in the binary as readable text. Each one is XORed against
+a per-string keystream generated at compile time, so `strings` on the DLL and a scan of the process at rest come up
+empty. A string is decrypted only at the moment it is used, into a small buffer that is wiped (`volatile` zero-fill) as
+soon as it leaves scope, so a plaintext copy is never resident between uses. Nothing is decrypted in the per-frame draw
+path, so there is no runtime cost to speak of (the Classic look still renders in the same 506 primitives).
+
+This is obfuscation, not encryption-as-security: the key ships inside the binary, so it raises the cost of static
+reverse engineering and defeats casual memory scans, but a debugger on the decode site can still recover the text. It
+covers the library's own literals; the labels your game passes to drizzy live in your binary and are yours to protect.
+The helper lives in `src/ui/obfuscate.h` (`DZ_STR` for inline literals, `DZ_OBF` for constant name tables), and
+`tools/check_encrypted_strings.py <binary>` fails if any library plaintext survives in a build. Turn the option off to
+keep the strings readable while debugging.
+
 ## Getting started
 
 ### Requirements
@@ -218,6 +234,7 @@ Use `--preset debug` for a Debug build. Everything lands in `build/Release` (or 
 | `DRIZZY_EMBED_DEFAULT_FONT` | ON | Embed Inter Regular for `FontAtlas::AddFontDefault()`. |
 | `DRIZZY_ENABLE_LTO` | ON | Link-time code generation in optimized builds. A DLL linking the libraries links with `/LTCG`. |
 | `DRIZZY_ENABLE_AVX2` | OFF | `/arch:AVX2`. Only enable it if every player's CPU has AVX2 (2013 or newer). |
+| `DRIZZY_ENCRYPT_STRINGS` | ON | Encrypt the library's own string literals in memory (see [below](#strings-are-encrypted-in-memory)). Turn off to keep them readable while debugging. |
 
 ### Run the samples
 
@@ -341,7 +358,7 @@ samples/overlay_dll/ injectable overlay DLL and its stand-in-game test host
 samples/common/      widget gallery, animated backgrounds, sample fonts and rebindable keybinds shared by the samples
 third_party/         stb_truetype and msdfgen core, compiled into drizzy_core
 assets/fonts/        Inter Regular (embedded as the default font) and the fonts the samples embed
-cmake/, tools/       shader compilation and the font-embedding build step
+cmake/, tools/       shader compilation, the font-embedding build step, and check_encrypted_strings.py
 ```
 
 ## Third-party code

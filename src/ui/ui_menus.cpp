@@ -46,7 +46,7 @@ bool Ui::BeginMainMenuBar() {
                            WindowFlags::NoScrollbar | WindowFlags::NoCollapse | WindowFlags::NoSavedSettings |
                            WindowFlags::NoBringToFrontOnFocus | WindowFlags::NoShadow | WindowFlags::MenuBar |
                            WindowFlags::AlwaysAutoResize;
-    bool open = Begin("##MainMenuBar", nullptr, flags);
+    bool open = Begin(DZ_STR("##MainMenuBar"), nullptr, flags);
     PopStyleVar(3);
     if (open) open = BeginMenuBar();
     if (!open) End();

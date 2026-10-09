@@ -280,7 +280,7 @@ void Storage::SetFloat(ID key, float value) {
 
 bool IsMouseValid(Vec2 pos) { return pos.x > -1e29f && pos.y > -1e29f; }
 
-ID MoveId(const Window* window) { return HashStr("#MOVE", window->id); }
+ID MoveId(const Window* window) { return HashStr(DZ_STR("#MOVE"), window->id); }
 
 UiState::Window* FindWindow(UiState& g, ID id) {
     const auto it = g.windowsById.find(id);
@@ -347,7 +347,7 @@ bool BeginPopupEx(Ui& ui, UiState& g, ID id, uint32_t flags) {
     if (!(flags & kWindowModal)) flags |= WindowFlags::NoTitleBar | WindowFlags::NoMove | WindowFlags::NoResize;
     if (!g.nextWindow.hasSize) flags |= WindowFlags::AlwaysAutoResize;
     char name[32];
-    std::snprintf(name, sizeof(name), "##Popup_%08X", id);
+    std::snprintf(name, sizeof(name), DZ_STR("##Popup_%08X"), id);
     g.beginPopupStack.push_back(g.openPopups[level]);
     const bool visible = ui.Begin(name, nullptr, flags);
     if (level < g.openPopups.size()) g.openPopups[level].window = g.current;
@@ -1154,7 +1154,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     uint32_t resizeEdges = 0;  // edges under the mouse or being dragged, highlighted when the frame is drawn
     bool resizeHeld = false;
     if (resizable && !w->hidden) {
-        const ID resizeId = HashStr("#RESIZE", w->id);
+        const ID resizeId = HashStr(DZ_STR("#RESIZE"), w->id);
         const Vec2 mouse = g.mousePos;
         const Rect grip(w->outerRect.max - Vec2(gripSize, gripSize), w->outerRect.max);
         if (g.hoveredWindow == w && g.hoveredId == 0 && g.disabled == 0 && (g.activeId == 0 || g.activeId == resizeId)) {
@@ -1240,12 +1240,12 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         if (open) {
             closeRect = Rect::FromCenter({title.max.x - style.framePadding.x - buttonSize * 0.5f, cy},
                                          {buttonSize * 0.5f, buttonSize * 0.5f});
-            if (ButtonBehavior(g, closeRect, HashStr("#CLOSE", w->id), &closeHovered, &closeHeld)) *open = false;
+            if (ButtonBehavior(g, closeRect, HashStr(DZ_STR("#CLOSE"), w->id), &closeHovered, &closeHeld)) *open = false;
         }
         if (!(flags & WindowFlags::NoCollapse)) {
             collapseRect = Rect::FromCenter({title.min.x + style.framePadding.x + buttonSize * 0.5f, cy},
                                             {buttonSize * 0.5f, buttonSize * 0.5f});
-            if (ButtonBehavior(g, collapseRect, HashStr("#COLLAPSE", w->id), &collapseHovered, nullptr)) {
+            if (ButtonBehavior(g, collapseRect, HashStr(DZ_STR("#COLLAPSE"), w->id), &collapseHovered, nullptr)) {
                 w->collapsed = !w->collapsed;
             }
             if (g.mouseDoubleClicked[0] && g.hoveredWindow == w && g.hoveredId == 0 &&
@@ -1264,7 +1264,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         const float grabH = Clamp(trackH * viewHeight / std::max(contentHeight, 1.0f), style.grabMinSize, trackH);
         const float travel = std::max(trackH - grabH, 1.0f);
         float grabY = track.min.y + travel * (w->scrollMax.y > 0.0f ? w->scroll.y / w->scrollMax.y : 0.0f);
-        const ID scrollId = HashStr("#SCROLLY", w->id);
+        const ID scrollId = HashStr(DZ_STR("#SCROLLY"), w->id);
         bool hovered, held;
         ButtonBehavior(g, track, scrollId, &hovered, &held);
         if (held) {
@@ -1456,7 +1456,7 @@ bool Ui::BeginChild(std::string_view strId, Vec2 size, bool border, uint32_t fla
     if (s.x <= 0.0f) s.x = std::max(avail.x + s.x, 4.0f);
     if (s.y <= 0.0f) s.y = std::max(avail.y + s.y, 4.0f);
     char name[512];
-    std::snprintf(name, sizeof(name), "%s/%.*s_%08X", parent->name.c_str(), int(strId.size()), strId.data(), id);
+    std::snprintf(name, sizeof(name), DZ_STR("%s/%.*s_%08X"), parent->name.c_str(), int(strId.size()), strId.data(), id);
     g.nextWindow.hasPos = true;
     g.nextWindow.pos = parent->cursorPos;
     g.nextWindow.posCond = Cond::Always;
@@ -1824,7 +1824,7 @@ void Ui::BeginTooltip() {
     }
     const uint32_t flags = kWindowTooltip | WindowFlags::NoTitleBar | WindowFlags::NoMove | WindowFlags::NoResize |
                            WindowFlags::NoInputs | WindowFlags::AlwaysAutoResize | WindowFlags::NoScrollbar;
-    Begin("##Tooltip", nullptr, flags);
+    Begin(DZ_STR("##Tooltip"), nullptr, flags);
 }
 
 void Ui::EndTooltip() {
@@ -2006,23 +2006,23 @@ std::string Ui::SaveIniSettings() const {
         s.collapsed = w->collapsed;
         s.hasPos = s.hasSize = true;
     }
-    std::string out = "# drizzy UI window layout\n";
+    std::string out(DZ_STR("# drizzy UI window layout\n"));
     char line[128];
     for (const auto& entry : g.windowSettings) {
         const WindowSettings& s = entry.second;
         if (s.name.empty()) continue;
-        out += "window \"";
+        out += DZ_STR("window \"");
         out += s.name;
-        out += "\"\n";
+        out += DZ_STR("\"\n");
         if (s.hasPos) {
-            std::snprintf(line, sizeof(line), "pos %d %d\n", int(s.pos.x), int(s.pos.y));
+            std::snprintf(line, sizeof(line), DZ_STR("pos %d %d\n"), int(s.pos.x), int(s.pos.y));
             out += line;
         }
         if (s.hasSize) {
-            std::snprintf(line, sizeof(line), "size %d %d\n", int(s.size.x), int(s.size.y));
+            std::snprintf(line, sizeof(line), DZ_STR("size %d %d\n"), int(s.size.x), int(s.size.y));
             out += line;
         }
-        std::snprintf(line, sizeof(line), "collapsed %d\n\n", s.collapsed ? 1 : 0);
+        std::snprintf(line, sizeof(line), DZ_STR("collapsed %d\n\n"), s.collapsed ? 1 : 0);
         out += line;
     }
     return out;
@@ -2056,7 +2056,7 @@ void Ui::LoadIniSettings(std::string_view data) {
         std::string_view line = trim(data.substr(i, (nl == std::string_view::npos ? data.size() : nl) - i));
         i = (nl == std::string_view::npos) ? data.size() + 1 : nl + 1;
         if (line.empty() || line.front() == '#') continue;
-        if (line.substr(0, 7) == "window ") {
+        if (line.substr(0, 7) == DZ_STR("window ")) {
             flush();
             const size_t q0 = line.find('"');
             const size_t q1 = q0 == std::string_view::npos ? q0 : line.find('"', q0 + 1);
@@ -2064,11 +2064,11 @@ void Ui::LoadIniSettings(std::string_view data) {
                 cur.name.assign(line.substr(q0 + 1, q1 - q0 - 1));
                 have = true;
             }
-        } else if (line.substr(0, 4) == "pos ") {
+        } else if (line.substr(0, 4) == DZ_STR("pos ")) {
             if (parse2(line.substr(4), cur.pos.x, cur.pos.y)) cur.hasPos = true;
-        } else if (line.substr(0, 5) == "size ") {
+        } else if (line.substr(0, 5) == DZ_STR("size ")) {
             if (parse2(line.substr(5), cur.size.x, cur.size.y)) cur.hasSize = true;
-        } else if (line.substr(0, 10) == "collapsed ") {
+        } else if (line.substr(0, 10) == DZ_STR("collapsed ")) {
             cur.collapsed = std::strtol(std::string(line.substr(10)).c_str(), nullptr, 10) != 0;
         }
     }
