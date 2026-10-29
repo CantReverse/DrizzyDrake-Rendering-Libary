@@ -281,7 +281,12 @@ void Storage::SetFloat(ID key, float value) {
 
 bool IsMouseValid(Vec2 pos) { return pos.x > -1e29f && pos.y > -1e29f; }
 
-ID MoveId(const Window* window) { return HashStr(DZ_STR("#MOVE"), window->id); }
+ID ChromeId(const Window* window, ChromePart part) {
+    const uint32_t salt = uint32_t(part);
+    return HashData(&salt, sizeof(salt), window->id);
+}
+
+ID MoveId(const Window* window) { return ChromeId(window, ChromePart::Move); }
 
 UiState::Window* FindWindow(UiState& g, ID id) {
     const auto it = g.windowsById.find(id);
@@ -1165,7 +1170,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     uint32_t resizeEdges = 0;  // edges under the mouse or being dragged, highlighted when the frame is drawn
     bool resizeHeld = false;
     if (resizable && !w->hidden) {
-        const ID resizeId = HashStr(DZ_STR("#RESIZE"), w->id);
+        const ID resizeId = ChromeId(w, ChromePart::Resize);
         const Vec2 mouse = g.mousePos;
         const Rect grip(w->outerRect.max - Vec2(gripSize, gripSize), w->outerRect.max);
         if (g.hoveredWindow == w && g.hoveredId == 0 && g.disabled == 0 && (g.activeId == 0 || g.activeId == resizeId)) {
@@ -1251,12 +1256,12 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         if (open) {
             closeRect = Rect::FromCenter({title.max.x - style.framePadding.x - buttonSize * 0.5f, cy},
                                          {buttonSize * 0.5f, buttonSize * 0.5f});
-            if (ButtonBehavior(g, closeRect, HashStr(DZ_STR("#CLOSE"), w->id), &closeHovered, &closeHeld)) *open = false;
+            if (ButtonBehavior(g, closeRect, ChromeId(w, ChromePart::Close), &closeHovered, &closeHeld)) *open = false;
         }
         if (!(flags & WindowFlags::NoCollapse)) {
             collapseRect = Rect::FromCenter({title.min.x + style.framePadding.x + buttonSize * 0.5f, cy},
                                             {buttonSize * 0.5f, buttonSize * 0.5f});
-            if (ButtonBehavior(g, collapseRect, HashStr(DZ_STR("#COLLAPSE"), w->id), &collapseHovered, nullptr)) {
+            if (ButtonBehavior(g, collapseRect, ChromeId(w, ChromePart::Collapse), &collapseHovered, nullptr)) {
                 w->collapsed = !w->collapsed;
             }
             if (g.mouseDoubleClicked[0] && g.hoveredWindow == w && g.hoveredId == 0 &&
@@ -1275,7 +1280,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         const float grabH = Clamp(trackH * viewHeight / std::max(contentHeight, 1.0f), style.grabMinSize, trackH);
         const float travel = std::max(trackH - grabH, 1.0f);
         float grabY = track.min.y + travel * (w->scrollMax.y > 0.0f ? w->scroll.y / w->scrollMax.y : 0.0f);
-        const ID scrollId = HashStr(DZ_STR("#SCROLLY"), w->id);
+        const ID scrollId = ChromeId(w, ChromePart::ScrollY);
         bool hovered, held;
         ButtonBehavior(g, track, scrollId, &hovered, &held);
         if (held) {

@@ -43,14 +43,28 @@ constexpr uint64_t ObfMix(uint64_t x) {
     return x ^ (x >> 31);
 }
 
-// The i-th keystream byte for a seed. Always encrypts: this facility is opt-in by writing DZ_ENCRYPT, so there is no
-// build switch that turns it into a no-op (unlike the library's own DRIZZY_ENCRYPT_STRINGS). Identical in the
-// compile-time encrypt and the runtime decrypt, so one undoes the other.
-constexpr unsigned char ObfKeyByteRaw(uint64_t seed, unsigned i) {
-    uint64_t k = seed ^ 0xD1B54A32D192ED03ull;
-    for (unsigned j = 0; j <= i; ++j) k = ObfMix(k);
-    return static_cast<unsigned char>(k & 0xFFu);
-}
+// The keystream for a seed, read one byte at a time. Each splitmix64 step yields eight bytes, so a string costs one mix
+// per eight characters and decrypting is linear in its length. The same generator runs in the compile-time encrypt
+// and the runtime decrypt, so one undoes the other. Always encrypts: this facility is opt-in by writing DZ_ENCRYPT, so
+// there is no build switch that turns it into a no-op (unlike the library's own DRIZZY_ENCRYPT_STRINGS).
+struct ObfKeystream {
+    uint64_t state;
+    uint64_t word = 0;
+    unsigned left = 0;  // unread bytes in `word`
+
+    constexpr explicit ObfKeystream(uint64_t seed) : state(seed ^ 0xD1B54A32D192ED03ull) {}
+    constexpr unsigned char Next() {
+        if (left == 0) {
+            state = ObfMix(state);
+            word = state;
+            left = 8;
+        }
+        const unsigned char b = static_cast<unsigned char>(word & 0xFFu);
+        word >>= 8;
+        --left;
+        return b;
+    }
+};
 
 // Secure wipe: volatile writes the optimizer may not elide. Keeps the plaintext window to the buffer's scope.
 inline void ObfWipe(char* p, unsigned n) {
@@ -73,8 +87,9 @@ struct ObfLiteral {
 template <ObfLiteral Plain, uint64_t Seed>
 consteval auto ObfEncrypt() {
     ObfLiteral<sizeof(Plain.data)> out = Plain;
+    ObfKeystream key(Seed);
     for (unsigned i = 0; i < sizeof(Plain.data); ++i)
-        out.data[i] = static_cast<char>(static_cast<unsigned char>(Plain.data[i]) ^ ObfKeyByteRaw(Seed, i));
+        out.data[i] = static_cast<char>(static_cast<unsigned char>(Plain.data[i]) ^ key.Next());
     return out;
 }
 
@@ -90,8 +105,8 @@ struct Decryptor {
         // Read the ciphertext through a volatile pointer so the compiler cannot fold the decrypt back into a stored
         // plaintext constant; the XOR must run at runtime against the real encrypted bytes.
         const volatile unsigned char* src = reinterpret_cast<const volatile unsigned char*>(Cipher.data);
-        for (unsigned i = 0; i < N; ++i)
-            buf_[i] = static_cast<char>(static_cast<unsigned char>(src[i]) ^ ObfKeyByteRaw(Seed, i));
+        ObfKeystream key(Seed);
+        for (unsigned i = 0; i < N; ++i) buf_[i] = static_cast<char>(static_cast<unsigned char>(src[i]) ^ key.Next());
     }
     DZ_FORCEINLINE ~Decryptor() { ObfWipe(buf_, N); }
     Decryptor(const Decryptor&) = delete;

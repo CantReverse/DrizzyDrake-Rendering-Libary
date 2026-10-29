@@ -381,6 +381,10 @@ bool IsPopupOpenId(const UiState& g, ID id);
 void OpenPopupEx(UiState& g, ID id);
 bool BeginPopupEx(Ui& ui, UiState& g, ID id, uint32_t flags);
 void ClosePopupToLevel(UiState& g, size_t level);
+// The parts of a window's own chrome that take input. Their IDs mix the window's ID with the part, so these per-frame IDs
+// need no label string (and nothing to decrypt).
+enum class ChromePart : uint32_t { Move = 1, Resize, Close, Collapse, ScrollY };
+ID ChromeId(const Window* window, ChromePart part);
 ID MoveId(const Window* window);
 bool IsMouseValid(Vec2 pos);
 

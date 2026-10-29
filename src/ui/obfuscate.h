@@ -14,9 +14,10 @@
 #include "drizzy/secure_string.h"
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <cstring>
 #include <string_view>
 #include <vector>
 
@@ -34,10 +35,18 @@ inline constexpr unsigned kObfCap = 40;
 
 // The library's own literals honour DRIZZY_ENCRYPT_STRINGS: a disabled build uses a zero keystream, leaving them
 // readable for debugging (and so tools/check_encrypted_strings.py sees the markers reappear). The public facility in
-// secure_string.h has no such switch - ObfKeyByteRaw always encrypts.
-constexpr unsigned char ObfKeyByte(uint64_t seed, unsigned i) {
-    if (!kObfEnabled) return 0;
-    return ObfKeyByteRaw(seed, i);
+// secure_string.h has no such switch - its ObfKeystream always encrypts.
+//
+// XORs `n` bytes of `src` into `dst` with the keystream of `seed`: encrypts plaintext, decrypts ciphertext. Linear in
+// `n` (one mix per eight bytes). `src` is read through a volatile pointer so the decrypt of a constant stays a runtime
+// operation instead of being folded back into a stored plaintext.
+inline void ObfXor(char* dst, const volatile unsigned char* src, size_t n, uint64_t seed) {
+    if (!kObfEnabled) {
+        for (size_t i = 0; i < n; ++i) dst[i] = static_cast<char>(src[i]);
+        return;
+    }
+    ObfKeystream key(seed);
+    for (size_t i = 0; i < n; ++i) dst[i] = static_cast<char>(static_cast<unsigned char>(src[i]) ^ key.Next());
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -56,17 +65,18 @@ consteval ObfEntry ObfMakeEntry() {
     ObfEntry e{};
     e.seed = Seed;
     e.len = static_cast<unsigned char>(sizeof(Plain.data) - 1);
-    for (unsigned i = 0; i < sizeof(Plain.data); ++i)
-        e.bytes[i] = static_cast<unsigned char>(static_cast<unsigned char>(Plain.data[i]) ^ ObfKeyByte(Seed, i));
+    ObfKeystream key(Seed);
+    for (unsigned i = 0; i < sizeof(Plain.data); ++i) {
+        const unsigned char k = key.Next();
+        e.bytes[i] = static_cast<unsigned char>(static_cast<unsigned char>(Plain.data[i]) ^ (kObfEnabled ? k : 0u));
+    }
     return e;
 }
 
-// Decode an entry into `out` (must hold len+1 bytes); returns the length. Volatile reads keep it a runtime decrypt.
+// Decode an entry into `out` (must hold len+1 bytes); returns the length.
 inline unsigned ObfDecode(const ObfEntry& e, char* out) {
-    const volatile unsigned char* src = e.bytes;
     const unsigned n = e.len;
-    for (unsigned i = 0; i < n; ++i)
-        out[i] = static_cast<char>(static_cast<unsigned char>(src[i]) ^ ObfKeyByte(e.seed, i));
+    ObfXor(out, e.bytes, n, e.seed);
     out[n] = '\0';
     return n;
 }
@@ -99,6 +109,11 @@ inline const char* ObfGet(const ObfEntry& e) {
 // per-instance keystream (keyed from a process-random seed, so the bytes differ run to run) and hands out a plaintext
 // copy only through a scoped Plain value that wipes itself the moment it goes out of scope. So a caller's label - even
 // an encrypted DZ_ENCRYPT literal - never sits in the library's own memory as readable text between uses.
+//
+// Decoding never touches the heap: the memory a Plain decodes into is reserved next to the ciphertext when the text is
+// assigned, so a frame that only reads (draws a title, a header, a notification) allocates nothing. Assigning the text
+// it already holds (a table header set up every frame) is a no-op. Not thread-safe, like the Ui that owns it, and it
+// must not be assigned, moved or destroyed while a Plain of it is alive.
 // ---------------------------------------------------------------------------------------------------------------------
 
 // A per-process, per-string seed. Mixing in the address of a function-local static adds ASLR entropy, so the stored
@@ -113,79 +128,115 @@ class SecureString {
 public:
     SecureString() = default;
     SecureString(std::string_view s) { assign(s); }
-    SecureString(const SecureString& o) : enc_(o.enc_), key_(o.key_) {}
-    SecureString(SecureString&& o) noexcept : enc_(std::move(o.enc_)), key_(o.key_) { o.key_ = 0; }
+    SecureString(const SecureString& o) { copyFrom(o); }
+    SecureString(SecureString&& o) noexcept : buf_(std::move(o.buf_)), size_(o.size_), key_(o.key_) {
+        assert(o.live_ == 0 && "SecureString moved while decoded");
+        o.size_ = 0;
+        o.key_ = 0;
+    }
     SecureString& operator=(const SecureString& o) {
-        if (this != &o) { wipe(); enc_ = o.enc_; key_ = o.key_; }
+        if (this != &o) {
+            wipe();
+            copyFrom(o);
+        }
         return *this;
     }
     SecureString& operator=(SecureString&& o) noexcept {
-        if (this != &o) { wipe(); enc_ = std::move(o.enc_); key_ = o.key_; o.key_ = 0; }
+        if (this != &o) {
+            assert(live_ == 0 && o.live_ == 0 && "SecureString moved while decoded");
+            wipe();
+            buf_ = std::move(o.buf_);
+            size_ = o.size_;
+            key_ = o.key_;
+            o.size_ = 0;
+            o.key_ = 0;
+        }
         return *this;
     }
-    ~SecureString() { wipe(); }
+    ~SecureString() {
+        assert(live_ == 0 && "SecureString destroyed while decoded");
+        wipe();
+    }
 
     void assign(std::string_view s) {
+        assert(live_ == 0 && "SecureString assigned while decoded");
+        if (equals(s)) return;  // the text it already holds: nothing to re-encrypt
         wipe();
-        enc_.resize(s.size());
-        if (!kObfEnabled) {  // debugging build: store plaintext so a memory scan shows the text, matching DZ_STR off
-            for (size_t i = 0; i < s.size(); ++i) enc_[i] = static_cast<unsigned char>(s[i]);
-            key_ = 0;
-            return;
-        }
-        key_ = ObfRuntimeKey();
-        uint64_t k = key_ ^ 0xD1B54A32D192ED03ull;
-        for (size_t i = 0; i < s.size(); ++i) {
-            k = ObfMix(k);
-            enc_[i] = static_cast<unsigned char>(static_cast<unsigned char>(s[i]) ^ static_cast<unsigned char>(k & 0xFFu));
-        }
+        size_ = s.size();
+        // The ciphertext, then the room a Plain decodes into (and its null). Zero-filled by wipe() or the resize, and
+        // reused without reallocating while the text does not grow.
+        buf_.resize(size_ ? size_ * 2 + 1 : 0);
+        // A disabled build keeps the plaintext (key 0, a copy), so a memory scan shows it, matching DZ_STR off.
+        key_ = kObfEnabled ? ObfRuntimeKey() : 0;
+        ObfXor(buf_.data(), reinterpret_cast<const unsigned char*>(s.data()), size_, key_);
     }
     SecureString& operator=(std::string_view s) { assign(s); return *this; }
 
-    bool empty() const { return enc_.empty(); }
-    size_t size() const { return enc_.size(); }
-    void clear() { wipe(); enc_.clear(); key_ = 0; }
+    // Whether it holds `s`, found by encrypting `s` against the stored ciphertext: no plaintext copy is made.
+    bool equals(std::string_view s) const {
+        if (s.size() != size_) return false;
+        if (!kObfEnabled) return size_ == 0 || std::memcmp(buf_.data(), s.data(), size_) == 0;
+        ObfKeystream key(key_);
+        unsigned char diff = 0;
+        for (size_t i = 0; i < size_; ++i) {
+            diff |= static_cast<unsigned char>(static_cast<unsigned char>(buf_[i]) ^ static_cast<unsigned char>(s[i]) ^
+                                               key.Next());
+        }
+        return diff == 0;
+    }
 
-    // A scoped plaintext decode of the string. Wiped as soon as it leaves scope: use it inline (pass view() / c_str()
-    // as an argument), do not persist the pointer or the view beyond the Plain's lifetime.
+    bool empty() const { return size_ == 0; }
+    size_t size() const { return size_; }
+    void clear() {
+        assert(live_ == 0 && "SecureString cleared while decoded");
+        wipe();
+        buf_.clear();
+        size_ = 0;
+        key_ = 0;
+    }
+
+    // A scoped plaintext decode of the string. Wiped as soon as the last Plain of the string leaves scope: use it inline
+    // (pass view() / c_str() as an argument), do not persist the pointer or the view beyond the Plain's lifetime.
+    // Plains of the same string share one decode, so nesting them is fine.
     class Plain {
     public:
-        explicit Plain(const SecureString& s) : n_(s.enc_.size()), buf_(new char[s.enc_.size() + 1]) {
-            if (!kObfEnabled) {
-                for (size_t i = 0; i < n_; ++i) buf_[i] = static_cast<char>(s.enc_[i]);
-            } else {
-                uint64_t k = s.key_ ^ 0xD1B54A32D192ED03ull;
-                for (size_t i = 0; i < n_; ++i) {
-                    k = ObfMix(k);
-                    buf_[i] = static_cast<char>(static_cast<unsigned char>(s.enc_[i]) ^ static_cast<unsigned char>(k & 0xFFu));
-                }
+        explicit Plain(const SecureString& s) : s_(&s) {
+            if (s.live_++ == 0 && s.size_) {
+                ObfXor(s.Scratch(), reinterpret_cast<const unsigned char*>(s.buf_.data()), s.size_, s.key_);
             }
-            buf_[n_] = '\0';
         }
-        Plain(Plain&& o) noexcept : n_(o.n_), buf_(std::move(o.buf_)) { o.n_ = 0; }
+        Plain(Plain&& o) noexcept : s_(o.s_) { o.s_ = nullptr; }
         Plain(const Plain&) = delete;
         Plain& operator=(const Plain&) = delete;
         Plain& operator=(Plain&&) = delete;
         ~Plain() {
-            if (buf_) ObfWipe(buf_.get(), static_cast<unsigned>(n_ + 1));
+            if (s_ && --s_->live_ == 0 && s_->size_) ObfWipe(s_->Scratch(), static_cast<unsigned>(s_->size_));
         }
 
-        std::string_view view() const { return std::string_view(buf_.get(), n_); }
-        const char* c_str() const { return buf_.get(); }
+        std::string_view view() const { return std::string_view(c_str(), s_->size_); }
+        const char* c_str() const { return s_->size_ ? s_->Scratch() : ""; }
 
     private:
-        size_t n_;
-        std::unique_ptr<char[]> buf_;
+        const SecureString* s_;
     };
 
     Plain decode() const { return Plain(*this); }
 
 private:
-    void wipe() {
-        if (!enc_.empty()) ObfWipe(reinterpret_cast<char*>(enc_.data()), static_cast<unsigned>(enc_.size()));
+    char* Scratch() const { return buf_.data() + size_; }
+    void copyFrom(const SecureString& o) {  // the ciphertext only, never a live decode
+        buf_.assign(o.buf_.size(), '\0');
+        if (o.size_) std::memcpy(buf_.data(), o.buf_.data(), o.size_);
+        size_ = o.size_;
+        key_ = o.key_;
     }
-    std::vector<unsigned char> enc_;
+    void wipe() {
+        if (!buf_.empty()) ObfWipe(buf_.data(), static_cast<unsigned>(buf_.size()));
+    }
+    mutable std::vector<char> buf_;  // [ciphertext | decode scratch | null]; Plain writes the scratch
+    size_t size_ = 0;
     uint64_t key_ = 0;
+    mutable uint32_t live_ = 0;  // Plains alive
 };
 
 }  // namespace detail
