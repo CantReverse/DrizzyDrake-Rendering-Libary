@@ -83,6 +83,8 @@ struct Window {
     float titleBarHeight = 0.0f;
     float menuBarHeight = 0.0f;  // WindowFlags::MenuBar: a strip below the title bar for the menu bar
     float borderSize = 0.0f;
+    float chromeTop = 0.0f;      // ChromeShape::Bevel frames: the frame and stripe above the title bar (0 otherwise)
+    bool groupBox = false;       // a BeginGroupBox panel: its title (in the title bar's place) sits on the top border
     bool collapsed = false;
     bool active = false;     // Begin() was called this frame
     bool wasActive = false;  // Begin() was called last frame
@@ -129,6 +131,10 @@ struct Window {
     uint32_t lastItemStatus = 0;
 
     Storage storage;
+    // UiStyle::animationTime: popups and tooltips fade in from when they appeared; child regions share their parent's.
+    // Multiplies everything the window draws (UpdateAlpha).
+    float fade = 1.0f;
+    double appearTime = 0.0;
 };
 
 // Persisted window layout (SaveIniSettings / LoadIniSettings).
@@ -157,6 +163,24 @@ struct TabBarState {
     // Tabs shrink to fit the bar when their natural widths add up to more: this frame's total, last frame's total.
     float naturalWidth = 0.0f, naturalWidthPrev = 0.0f;
     float usedWidthPrev = 0.0f;  // how far last frame's tabs reached: TabShape::Pill draws its track that wide
+    // TabBarFlags::Vertical: tabs are cells of tabSize stacked from rowY down a column at startX; nextY is the next
+    // cell. The content of the selected tab is indented past the column (savedIndent restores the window's indent).
+    bool vertical = false;
+    Vec2 tabSize;
+    float nextY = 0.0f;
+    float savedIndent = 0.0f;
+    Rect selectedCell;
+    // UiStyle::animationTime: switching tabs slides the old tab's contents up and out while the new tab's slide up into
+    // place, both fading. For that moment BeginTabItem returns true for both (prevSelected's without input), and each
+    // starts at contentPos. contentBottom is the content area's bottom; contentEndY how low the contents submitted this
+    // frame reached. The rest is what BeginTabItem set up for EndTabItem to undo.
+    ID prevSelected = 0;
+    double selectTime = -1.0e9;
+    Vec2 contentPos;
+    float contentBottom = 0.0f, contentEndY = 0.0f;
+    bool fadePushed = false, clipPushed = false, outgoingOpen = false;
+    Rect savedClip;
+    float savedDisabledAlpha = 0.0f;
 };
 
 struct TableColumn {
@@ -231,6 +255,8 @@ struct NextWindowData {
     Rect anchor;
     float maxHeight = 0.0f;
     bool childBorder = false;
+    bool groupBox = false;
+    std::string_view groupTitle;  // BeginGroupBox's visible label, drawn by Begin (not kept beyond that call)
     void Clear() { *this = NextWindowData(); }
 };
 
@@ -312,6 +338,8 @@ struct UiState {
     Vec2 resizeStartMouse;
     int beginOrderCounter = 0;
     int rootWindowsCreated = 0;
+    ui_detail::Storage animations;  // Ui::Animate values (and the library's own: tab hovers) by ID
+    bool lastTabSelected = false;   // Ui::IsTabItemSelected: the last BeginTabItem was the selected tab
 
     // Items
     ID hoveredId = 0;
@@ -354,6 +382,8 @@ struct UiState {
     ID colorPickerId = 0;
     float colorPickerHue = 0.0f, colorPickerSat = 0.0f, colorPickerVal = 0.0f;
     Color colorPickerOriginal = 0;  // the color a ColorEdit's picker popup opened with
+    Color colorClipboard = 0;       // what a swatch's Copy put aside for Paste
+    bool hasColorClipboard = false;
     ID popupClosedByClick = 0;  // lets a combo's button close its popup instead of reopening it
     MouseCursor cursorRequest = MouseCursor::Arrow;
     int tooltipDepth = 0;
@@ -404,14 +434,33 @@ enum ButtonFlags : uint32_t {
 bool ButtonBehavior(UiState& g, const Rect& bb, ID id, bool* hovered, bool* held, uint32_t flags = 0);
 float CalcItemWidth(const UiState& g);
 Vec2 CalcItemSize(const UiState& g, Vec2 size, float defaultW, float defaultH);
+// A framed widget (slider, drag, combo, text field) of `frameSize` at the cursor, with a label `labelWidth` wide: to
+// the right of the frame on the same line, or on a line of its own above it (UiStyle::labelPlacement). `total` is the
+// whole item (for ItemSize / ItemAdd), `textBaseOffset` the baseline offset to give ItemSize.
+struct LabeledFrame {
+    Rect frame, total;
+    float textBaseOffset;
+};
+LabeledFrame LayoutLabeledFrame(const UiState& g, Vec2 frameSize, float labelWidth);
+void RenderFrameLabel(UiState& g, const LabeledFrame& item, std::string_view label);
+// The height above a window's menu bar and content: its title bar, and with ChromeShape::Bevel the frame and stripe.
+float TopChromeHeight(const Window* w);
+// Ui::Animate by ID: the value under `key` (from 0) moved toward `target` by deltaTime / `duration`, and returned.
+float AnimateTo(UiState& g, ID key, float target, float duration);
 bool IsKeyPressedImpl(const UiState& g, Key key, bool repeat);
 bool IsMouseHovering(const UiState& g, const Rect& r);
 
 // ---- Rendering helpers -----------------------------------------------------------------------------------------------
 Color StyleColor(const UiState& g, UiColor color, float alphaScale = 1.0f);
 Color LerpColor(Color a, Color b, float t);  // per channel, alpha included (ui_style.cpp)
-// A widget's box: fill (shaded by UiStyle::gradient, with the bevel line) plus the frame border when `border` is set.
+// A widget's box: fill (shaded by UiStyle::gradient or shade, with the bevel line) plus the frame border when `border`
+// is set.
 void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float rounding);
+// A square-cornered box filled with `fill`, shaded down by UiStyle::shade, inside a one-pixel Border outline (one
+// prim): small checkboxes, thin slider bars and slim swatches. With `outline` false, just the shaded fill.
+void RenderBox(UiState& g, const Rect& r, Color fill, bool outline = true);
+// `fill` darkened by UiStyle::shade: the bottom color of a shaded fill.
+Color ShadeDown(const UiState& g, Color fill);
 // The look-aware boxes widgets are drawn in. RenderFieldFrame: text fields, drags, combos and slider frames, in
 // UiStyle::frameShape. RenderButtonFrame: buttons in UiStyle::buttonShape; with a hard shadow a held button sinks into
 // it, and the rect returned is where it was drawn (its label goes there too).

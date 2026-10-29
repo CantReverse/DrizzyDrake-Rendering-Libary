@@ -77,17 +77,20 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
     if (w->skipItems) return false;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
     const float width = ui_detail::CalcItemWidth(g);
-    const Rect frame = Rect::FromPosSize(w->cursorPos, {width, FrameHeight(g)});
-    const Rect total = FramedItemBounds(g, frame, TextSize(g, text).x);
-    ItemSize(g, total.Size(), g.style.framePadding.y);
-    if (!ItemAdd(g, total, id)) return false;
+    const SliderShape shape = g.style.sliderShape;
+    // A Bar slider is a thin bar with room under it for the value, which reads below the end of the fill.
+    const float barH = std::floor(g.fontSize * 0.5f) + 1.0f;
+    const float frameH = shape == SliderShape::Bar ? barH + std::floor(TextLineHeight(g) * 0.5f) : FrameHeight(g);
+    const LabeledFrame item = LayoutLabeledFrame(g, {width, frameH}, TextSize(g, text).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return false;
 
     const bool hovered = ItemHoverable(g, frame, id);
     if (hovered && g.mouseClicked[0]) SetActiveID(g, id, w);
     const bool isInt = valueI != nullptr;
     const float range = vmax - vmin;
     float value = isInt ? float(*valueI) : *valueF;
-    const SliderShape shape = g.style.sliderShape;
 
     // Where the value maps to: the grab block's travel, the rail or segments (which leave room on their right for the
     // value text, as wide as the widest end of the range), or the whole frame.
@@ -111,6 +114,10 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
     } else if (shape == SliderShape::Fill) {
         trackMin = frame.min.x;
         trackMax = frame.max.x;
+    } else if (shape == SliderShape::Bar) {
+        rail = Rect(frame.min.x, frame.min.y, frame.max.x, frame.min.y + barH);
+        trackMin = rail.min.x + 1.0f;  // inside the bar's outline
+        trackMax = rail.max.x - 1.0f;
     } else {
         grabW = g.style.grabMinSize;
         if (isInt && range > 0.0f) grabW = std::max(grabW, (width - 4.0f) / (range + 1.0f));
@@ -173,6 +180,22 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
         }
         RenderTextOverFill(g, frame, valueText, gx);
         break;
+    case SliderShape::Bar: {
+        // The empty bar (a step lighter than the frame color), the shaded accent fill inside its outline, and the value
+        // centered on the end of the fill, outlined so it reads over the bar and whatever is under it.
+        const Color empty = LerpColor(StyleColor(g, hovered || active ? UiColor::FrameBgHovered : UiColor::FrameBg),
+                                      StyleColor(g, UiColor::Text), 0.1f);
+        RenderBox(g, rail, empty);
+        if (gx > rail.min.x + 1.0f) RenderBox(g, Rect(rail.min.x + 1.0f, rail.min.y + 1.0f, gx, rail.max.y - 1.0f), grab, false);
+        const Vec2 size = TextSize(g, valueText);
+        const float x = Clamp(std::floor(gx - size.x * 0.5f), frame.min.x, std::max(frame.min.x, frame.max.x - size.x));
+        TextStyle style;
+        style.color = StyleColor(g, UiColor::Text);
+        style.outlineWidth = 1.0f;
+        style.outlineColor = StyleColor(g, UiColor::Border);
+        dl.AddText(*g.font, g.fontSize, {x, std::floor(rail.max.y - size.y * 0.5f)}, valueText, style);
+        break;
+    }
     default: {
         RenderFieldFrame(g, frame, hovered, active);
         const Rect grabRect(gx - grabW * 0.5f, frame.min.y + 2.0f, gx + grabW * 0.5f, frame.max.y - 2.0f);
@@ -182,7 +205,7 @@ bool SliderImpl(UiState& g, std::string_view label, float* valueF, int* valueI, 
         break;
     }
     }
-    RenderLabelRight(g, frame, text);
+    RenderFrameLabel(g, item, text);
     if (changed) w->lastItemStatus |= kItemEdited;
     return changed;
 }
@@ -192,10 +215,10 @@ bool DragImpl(UiState& g, std::string_view label, float* valueF, int* valueI, fl
     Window* w = g.current;
     if (w->skipItems) return false;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
-    const Rect frame = Rect::FromPosSize(w->cursorPos, {ui_detail::CalcItemWidth(g), FrameHeight(g)});
-    const Rect total = FramedItemBounds(g, frame, TextSize(g, text).x);
-    ItemSize(g, total.Size(), g.style.framePadding.y);
-    if (!ItemAdd(g, total, id)) return false;
+    const LabeledFrame item = LayoutLabeledFrame(g, {ui_detail::CalcItemWidth(g), FrameHeight(g)}, TextSize(g, text).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return false;
 
     const bool hovered = ItemHoverable(g, frame, id);
     if (hovered && g.mouseClicked[0]) {
@@ -233,7 +256,7 @@ bool DragImpl(UiState& g, std::string_view label, float* valueF, int* valueI, fl
     RenderFieldFrame(g, frame, hovered, active);
     const char* valueText = valueI ? FormatNumber(g, format, *valueI) : FormatNumber(g, format, double(*valueF));
     RenderTextAligned(g, frame, valueText, {0.5f, 0.5f});
-    RenderLabelRight(g, frame, text);
+    RenderFrameLabel(g, item, text);
     if (changed) w->lastItemStatus |= kItemEdited;
     return changed;
 }
@@ -286,12 +309,12 @@ void PlotImpl(Ui& ui, UiState& g, std::string_view label, const float* values, i
     if (w->skipItems) return;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
     const Vec2 size = CalcItemSize(g, sizeArg, ui_detail::CalcItemWidth(g), FrameHeight(g) * 2.5f);
-    const Rect frame = Rect::FromPosSize(w->cursorPos, size);
-    const Rect total = FramedItemBounds(g, frame, TextSize(g, text).x);
-    ItemSize(g, total.Size(), g.style.framePadding.y);
-    if (!ItemAdd(g, total, id)) return;
+    const LabeledFrame item = LayoutLabeledFrame(g, size, TextSize(g, text).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return;
     RenderTrack(g, frame);
-    RenderLabelRight(g, frame, text);
+    RenderFrameLabel(g, item, text);
     if (count <= 0 || !values) return;
 
     if (scaleMin == FLT_MAX || scaleMax == FLT_MAX) {
@@ -343,6 +366,61 @@ void PlotImpl(Ui& ui, UiState& g, std::string_view label, const float* values, i
         std::snprintf(tip, sizeof(tip), DZ_STR("%d: %.4g"), hoveredIndex, double(valueAt(hoveredIndex)));
         ui.SetTooltip(tip);
     }
+}
+
+// UiStyle::animationTime, as a fraction of it: how long the old tab's contents take to slide out, and when the new
+// tab's start sliding in (they overlap). Measured from a classic game menu: out in ~40%, in from ~15% to the end.
+constexpr float kTabOutEnd = 0.4f;
+constexpr float kTabInStart = 0.15f;
+
+// How far a tab switch has got (0..1, 1 when done or when animation is off).
+float TabSwitchProgress(const UiState& g, const TabBarState& bar) {
+    const float time = g.style.animationTime;
+    return time > 0.0f ? Clamp(float((g.time - bar.selectTime) / double(time)), 0.0f, 1.0f) : 1.0f;
+}
+
+// Starts the contents of a tab that BeginTabItem is returning true for, at the bar's content position. During a switch
+// the outgoing tab's contents slide up most of the content height and fade out (without input), and the incoming
+// tab's rise from below and fade in (easing out), both clipped to the content area. EndTabItem undoes it all.
+void BeginTabContent(Ui& ui, UiState& g, TabBarState& bar, bool outgoing) {
+    Window* w = g.current;
+    w->cursorPos = bar.contentPos;
+    w->currLineHeight = 0.0f;
+    w->currLineTextBaseOffset = 0.0f;
+    const float p = TabSwitchProgress(g, bar);
+    if (p >= 1.0f) return;
+    const float height = std::max(bar.contentBottom - bar.contentPos.y, 1.0f);
+    float alpha, offset;
+    if (outgoing) {
+        const float q = Clamp(p / kTabOutEnd, 0.0f, 1.0f);
+        alpha = 1.0f - q;
+        offset = -height * 0.8f * q;
+    } else {
+        const float q = Clamp((p - kTabInStart) / (1.0f - kTabInStart), 0.0f, 1.0f);
+        const float rise = 1.0f - (1.0f - q) * (1.0f - q) * (1.0f - q);
+        alpha = Clamp((p - kTabInStart) / 0.45f, 0.0f, 1.0f);
+        offset = height * 0.3f * (1.0f - rise);
+    }
+    w->cursorPos.y += std::floor(offset);
+    ui.PushStyleVar(UiStyleVar::Alpha, g.style.alpha * alpha);
+    bar.fadePushed = true;
+    bar.savedClip = w->clipRect;
+    w->clipRect = w->clipRect.Intersect(Rect(w->clipRect.min.x, bar.contentPos.y, w->clipRect.max.x, bar.contentBottom));
+    w->dl->PushClipRect(w->clipRect, false);
+    bar.clipPushed = true;
+    if (outgoing) {
+        // Disabled for input only: its fade is the pushed alpha.
+        bar.savedDisabledAlpha = g.style.disabledAlpha;
+        g.style.disabledAlpha = 1.0f;
+        ui.BeginDisabled();
+        bar.outgoingOpen = true;
+    }
+}
+
+// The color of a tab label or icon in a vertical tab bar: selected, or between unselected and hovered by `hover`.
+Color VerticalTabColor(const UiState& g, bool selected, float hover) {
+    if (selected) return StyleColor(g, UiColor::Text);
+    return LerpColor(StyleColor(g, UiColor::TextDisabled), StyleColor(g, UiColor::Text, 0.85f), hover);
 }
 
 } // namespace
@@ -497,6 +575,28 @@ bool Ui::Checkbox(std::string_view label, bool* value) {
     Window* w = g.current;
     if (w->skipItems) return false;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
+    if (g.style.checkShape == CheckShape::Small) {
+        // A small shaded box centered on a line of text, the label after it: rows are as tall as a line of text.
+        const float lineH = TextLineHeight(g);
+        const float box = std::max(6.0f, std::floor(g.fontSize * 0.67f));
+        const Vec2 pos = w->cursorPos;
+        const Rect check = Rect::FromPosSize({pos.x, pos.y + std::floor((lineH - box) * 0.5f)}, {box, box});
+        const float labelW = TextSize(g, text).x;
+        const Rect total(pos, {check.max.x + (labelW > 0.0f ? g.style.itemInnerSpacing.x + labelW : 0.0f), pos.y + lineH});
+        ItemSize(g, total.Size());
+        if (!ItemAdd(g, total, id)) return false;
+        bool hovered, held;
+        const bool pressed = ButtonBehavior(g, total, id, &hovered, &held);
+        if (pressed) {
+            *value = !*value;
+            w->lastItemStatus |= kItemEdited;
+        }
+        const Color off = LerpColor(StyleColor(g, UiColor::FrameBg), StyleColor(g, UiColor::Text), hovered ? 0.24f : 0.18f);
+        if (*value) RenderGlow(g, check, 0.0f, hovered ? 1.0f : 0.7f);
+        RenderBox(g, check, *value ? StyleColor(g, hovered ? UiColor::SliderGrabActive : UiColor::CheckMark) : off);
+        if (labelW > 0.0f) RenderText(g, {check.max.x + g.style.itemInnerSpacing.x, pos.y}, text, StyleColor(g, UiColor::Text));
+        return pressed;
+    }
     const float box = FrameHeight(g);
     const Rect check = Rect::FromPosSize(w->cursorPos, {box, box});
     const Rect total = FramedItemBounds(g, check, TextSize(g, text).x);
@@ -537,6 +637,27 @@ bool Ui::RadioButton(std::string_view label, bool active) {
     Window* w = g.current;
     if (w->skipItems) return false;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
+    if (g.style.checkShape == CheckShape::Small) {
+        // Like the small checkbox: a small dot on the text line, outlined, filled with the accent color when active.
+        const float lineH = TextLineHeight(g);
+        const float box = std::max(6.0f, std::floor(g.fontSize * 0.67f));
+        const Vec2 pos = w->cursorPos;
+        const Rect check = Rect::FromPosSize({pos.x, pos.y + std::floor((lineH - box) * 0.5f)}, {box, box});
+        const float labelW = TextSize(g, text).x;
+        const Rect total(pos, {check.max.x + (labelW > 0.0f ? g.style.itemInnerSpacing.x + labelW : 0.0f), pos.y + lineH});
+        ItemSize(g, total.Size());
+        if (!ItemAdd(g, total, id)) return false;
+        bool hovered, held;
+        const bool pressed = ButtonBehavior(g, total, id, &hovered, &held);
+        const float r = box * 0.5f;
+        const Color fill = active ? StyleColor(g, hovered ? UiColor::SliderGrabActive : UiColor::CheckMark)
+                                  : LerpColor(StyleColor(g, UiColor::FrameBg), StyleColor(g, UiColor::Text), hovered ? 0.24f : 0.18f);
+        if (active) RenderGlow(g, check, r, hovered ? 1.0f : 0.7f);
+        w->dl->AddCircleFilled(check.Center(), r, StyleColor(g, UiColor::Border));
+        w->dl->AddCircleFilled(check.Center(), r - 1.0f, fill);
+        if (labelW > 0.0f) RenderText(g, {check.max.x + g.style.itemInnerSpacing.x, pos.y}, text, StyleColor(g, UiColor::Text));
+        return pressed;
+    }
     const float box = FrameHeight(g);
     const Rect check = Rect::FromPosSize(w->cursorPos, {box, box});
     const Rect total = FramedItemBounds(g, check, TextSize(g, text).x);
@@ -654,10 +775,10 @@ bool Ui::BeginCombo(std::string_view label, std::string_view preview, int maxVis
     if (w->skipItems) return false;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
     const float height = FrameHeight(g);
-    const Rect frame = Rect::FromPosSize(w->cursorPos, {ui_detail::CalcItemWidth(g), height});
-    const Rect total = FramedItemBounds(g, frame, TextSize(g, text).x);
-    ItemSize(g, total.Size(), g.style.framePadding.y);
-    if (!ItemAdd(g, total, id)) return false;
+    const LabeledFrame item = LayoutLabeledFrame(g, {ui_detail::CalcItemWidth(g), height}, TextSize(g, text).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return false;
     bool hovered, held;
     const bool pressed = ButtonBehavior(g, frame, id, &hovered, &held, kButtonPressOnClick);
     if (pressed && !IsPopupOpenId(g, id) && g.popupClosedByClick != id) OpenPopupEx(g, id);
@@ -667,7 +788,8 @@ bool Ui::BeginCombo(std::string_view label, std::string_view preview, int maxVis
     const float r = g.style.frameRounding;
     RenderFieldFrame(g, frame, hovered, open);
     const Rect arrowBox(frame.max.x - height, frame.min.y, frame.max.x, frame.max.y);
-    if (g.style.frameShape == FrameShape::Filled) {
+    // A shaded frame is one piece: a flat arrow box over it would break the shading.
+    if (g.style.frameShape == FrameShape::Filled && g.style.shade <= 0.0f) {
         dl.AddRectFilled(arrowBox, StyleColor(g, hovered || open ? UiColor::ButtonHovered : UiColor::Button),
                          CornerRadii(0.0f, r, r, 0.0f));
     }
@@ -676,7 +798,7 @@ bool Ui::BeginCombo(std::string_view label, std::string_view preview, int maxVis
     const Rect previewRect(frame.min + g.style.framePadding,
                            {arrowBox.min.x - g.style.framePadding.x, frame.max.y - g.style.framePadding.y});
     RenderTextAligned(g, previewRect, preview, {0.0f, 0.0f}, &previewRect);
-    RenderLabelRight(g, frame, text);
+    RenderFrameLabel(g, item, text);
     if (!open) return false;
 
     g.nextWindow.hasPos = true;
@@ -878,7 +1000,7 @@ void Ui::SetNextItemOpen(bool open, Cond cond) {
 // =====================================================================================================================
 // Tabs
 // =====================================================================================================================
-bool Ui::BeginTabBar(std::string_view strId) {
+bool Ui::BeginTabBar(std::string_view strId, uint32_t flags, Vec2 tabSize) {
     UiState& g = *m;
     Window* w = g.current;
     if (w->skipItems) return false;
@@ -887,10 +1009,33 @@ bool Ui::BeginTabBar(std::string_view strId) {
     bar.id = id;
     bar.window = w;
     if (bar.nextSelected) {
+        if (bar.nextSelected != bar.selected) {
+            // The old tab's contents slide out and the new tab's slide in from now (UiStyle::animationTime).
+            bar.prevSelected = bar.selected;
+            bar.selectTime = g.time;
+        }
         bar.selected = bar.nextSelected;
         bar.nextSelected = 0;
     }
     bar.selectedSubmitted = false;
+    bar.vertical = (flags & TabBarFlags::Vertical) != 0;
+    if (bar.vertical) {
+        // A column of cells from the cursor down; the selected tab's content is laid out to its right, from the top.
+        bar.tabSize = {tabSize.x > 0.0f ? tabSize.x : std::floor(g.fontSize * 6.0f),
+                       tabSize.y > 0.0f ? tabSize.y : FrameHeight(g) * 2.0f};
+        bar.startX = w->cursorPos.x;
+        bar.rowY = bar.nextY = w->cursorPos.y;
+        bar.selectedCell = Rect();
+        bar.savedIndent = w->indent;
+        w->indent = w->cursorPos.x - w->contentStartX + bar.tabSize.x + g.style.windowPadding.x;
+        w->cursorPos.x = std::floor(w->contentStartX + w->indent);
+        bar.contentPos = w->cursorPos;
+        bar.contentBottom = std::max(w->contentRegionMax.y, bar.contentPos.y);
+        bar.contentEndY = bar.contentPos.y;
+        g.tabBarStack.push_back(&bar);
+        w->idStack.push_back(id);
+        return true;
+    }
     const float height = FrameHeight(g);
     const Vec2 pos = w->cursorPos;
     const float width = std::max(w->contentRegionMax.x - pos.x, 1.0f);
@@ -917,6 +1062,9 @@ bool Ui::BeginTabBar(std::string_view strId) {
         default: w->dl->AddRectFilled(line, StyleColor(g, UiColor::TabActive)); break;
         }
     }
+    bar.contentPos = w->cursorPos;  // below the row
+    bar.contentBottom = std::max(w->contentRegionMax.y, bar.contentPos.y);
+    bar.contentEndY = bar.contentPos.y;
     g.tabBarStack.push_back(&bar);
     w->idStack.push_back(id);
     return true;
@@ -927,6 +1075,37 @@ void Ui::EndTabBar() {
     DZ_ASSERT(!g.tabBarStack.empty() && "EndTabBar() without BeginTabBar()");
     TabBarState* bar = g.tabBarStack.back();
     if (!bar->selectedSubmitted) bar->selected = 0;  // the selected tab is gone: the first tab takes over
+    if (bar->vertical) {
+        // Finish the column down to the bottom of the content area: its background below the last tab, and its edge
+        // (Border, then Separator) everywhere but beside the selected tab, which opens onto the content.
+        Window* w = g.current;
+        DrawList& dl = *w->dl;
+        const Rect& sel = bar->selectedCell;
+        const float x0 = bar->startX, x1 = bar->startX + bar->tabSize.x;
+        const float bottom = std::max(bar->nextY, w->contentRegionMax.y);
+        if (bottom > bar->nextY) dl.AddRectFilled(Rect(x0, bar->nextY, x1, bottom), StyleColor(g, UiColor::Tab));
+        const Color dark = StyleColor(g, UiColor::Border), light = StyleColor(g, UiColor::Separator);
+        const bool hasSel = sel.Height() > 0.0f;
+        const float darkTop = hasSel ? sel.min.y : bottom, lightTop = hasSel ? sel.min.y + 1.0f : bottom;
+        dl.AddRectFilled(Rect(x1 - 2.0f, bar->rowY, x1 - 1.0f, darkTop), dark);
+        dl.AddRectFilled(Rect(x1 - 1.0f, bar->rowY, x1, lightTop), light);
+        if (hasSel) {
+            dl.AddRectFilled(Rect(x1 - 2.0f, sel.max.y, x1 - 1.0f, bottom), dark);
+            dl.AddRectFilled(Rect(x1 - 1.0f, sel.max.y - 1.0f, x1, bottom), light);
+        }
+        // Back to the window's indent, below both the column and the selected tab's content.
+        w->indent = bar->savedIndent;
+        w->cursorPos.x = std::floor(w->contentStartX + w->indent);
+        w->cursorPos.y = std::max({w->cursorPos.y, bar->contentEndY, bottom + g.style.itemSpacing.y});
+        w->cursorMaxPos = MaxV(w->cursorMaxPos, Vec2(x1, bottom));
+        g.tabBarStack.pop_back();
+        PopID();
+        return;
+    }
+    if (bar->contentEndY > g.current->cursorPos.y) {
+        // During a switch the contents submitted last may not be the tallest: continue below the tallest.
+        g.current->cursorPos = {std::floor(g.current->contentStartX + g.current->indent), bar->contentEndY};
+    }
     bar->naturalWidthPrev = bar->naturalWidth;
     bar->usedWidthPrev = std::max(0.0f, bar->nextX - bar->startX - 2.0f);
     g.tabBarStack.pop_back();
@@ -940,6 +1119,43 @@ bool Ui::BeginTabItem(std::string_view label) {
     Window* w = g.current;
     const auto [id, text] = ParseLabel(label, w->idStack.back());
     const Vec2 textSize = TextSize(g, text);
+    if (bar.vertical) {
+        // The next cell down the column. The layout cursor stays with the content, beside the column.
+        const Rect cell(bar.startX, bar.nextY, bar.startX + bar.tabSize.x, bar.nextY + bar.tabSize.y);
+        bar.nextY = cell.max.y;
+        if (bar.selected == 0) bar.selected = id;
+        const bool selected = bar.selected == id;
+        if (selected) bar.selectedSubmitted = true;
+        g.lastTabSelected = selected;
+        if (ItemAdd(g, cell, id)) {
+            bool hovered, held;
+            if (ButtonBehavior(g, cell, id, &hovered, &held, kButtonPressOnClick)) bar.nextSelected = id;
+            // Labels brighten under the mouse over a moment (UiStyle::animationTime), instantly with animation off.
+            float hover = hovered ? 1.0f : 0.0f;
+            if (g.style.animationTime > 0.0f) {
+                const uint32_t salt = 0x484F5652u;  // the hover value's key, apart from the tab's own ID
+                hover = AnimateTo(g, HashData(&salt, sizeof(salt), id), hover, g.style.animationTime * 0.4f);
+            }
+            DrawList& dl = *w->dl;
+            if (selected) {
+                // Open onto the content: no fill (the window shows through), a dark and a light line along the top and
+                // bottom (EndTabBar leaves the column's edge out beside it).
+                bar.selectedCell = cell;
+                const Color dark = StyleColor(g, UiColor::Border), light = StyleColor(g, UiColor::Separator);
+                dl.AddRectFilled(Rect(cell.min.x, cell.min.y, cell.max.x - 1.0f, cell.min.y + 1.0f), dark);
+                dl.AddRectFilled(Rect(cell.min.x, cell.min.y + 1.0f, cell.max.x, cell.min.y + 2.0f), light);
+                dl.AddRectFilled(Rect(cell.min.x, cell.max.y - 2.0f, cell.max.x, cell.max.y - 1.0f), light);
+                dl.AddRectFilled(Rect(cell.min.x, cell.max.y - 1.0f, cell.max.x - 1.0f, cell.max.y), dark);
+            } else {
+                dl.AddRectFilled(cell, StyleColor(g, hovered ? UiColor::TabHovered : UiColor::Tab));
+            }
+            RenderTextAligned(g, cell, text, {0.5f, 0.5f}, nullptr, &textSize, VerticalTabColor(g, selected, hover));
+        }
+        const bool outgoing = !selected && id == bar.prevSelected && TabSwitchProgress(g, bar) < kTabOutEnd;
+        if (!selected && !outgoing) return false;
+        BeginTabContent(*this, g, bar, outgoing);
+        return true;
+    }
     // Tabs keep their natural width while they fit; when last frame's tabs overflowed the bar, all shrink by the same
     // factor (labels clip) so every tab stays reachable.
     const float naturalW = textSize.x + g.style.framePadding.x * 2.0f;
@@ -952,6 +1168,7 @@ bool Ui::BeginTabItem(std::string_view label) {
     if (bar.selected == 0) bar.selected = id;
     const bool selected = bar.selected == id;
     if (selected) bar.selectedSubmitted = true;
+    g.lastTabSelected = selected;
 
     // Tabs sit in the row reserved by BeginTabBar, so they do not move the layout cursor.
     if (ItemAdd(g, bb, id)) {
@@ -1008,10 +1225,34 @@ bool Ui::BeginTabItem(std::string_view label) {
         }
         }
     }
-    return selected;
+    const bool outgoing = !selected && id == bar.prevSelected && TabSwitchProgress(g, bar) < kTabOutEnd;
+    if (!selected && !outgoing) return false;
+    BeginTabContent(*this, g, bar, outgoing);
+    return true;
 }
 
-void Ui::EndTabItem() {}
+void Ui::EndTabItem() {
+    UiState& g = *m;
+    if (g.tabBarStack.empty()) return;
+    TabBarState& bar = *g.tabBarStack.back();
+    Window* w = g.current;
+    // Undo BeginTabContent, last first.
+    if (bar.outgoingOpen) {
+        EndDisabled();
+        g.style.disabledAlpha = bar.savedDisabledAlpha;
+        bar.outgoingOpen = false;
+    }
+    if (bar.clipPushed) {
+        w->dl->PopClipRect();
+        w->clipRect = bar.savedClip;
+        bar.clipPushed = false;
+    }
+    if (bar.fadePushed) {
+        PopStyleVar();
+        bar.fadePushed = false;
+    }
+    bar.contentEndY = std::max(bar.contentEndY, w->cursorPos.y);
+}
 
 // =====================================================================================================================
 // Plots

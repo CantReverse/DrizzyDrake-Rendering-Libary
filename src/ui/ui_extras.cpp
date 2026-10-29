@@ -46,7 +46,9 @@ bool MultiComponent(Ui& ui, UiState& g, std::string_view label, int count, Fn co
     const float spacing = g.style.itemInnerSpacing.x;
     const float each = std::max(1.0f, std::floor((total - spacing * float(count - 1)) / float(count)));
     bool changed = false;
+    const bool labelAbove = g.style.labelPlacement == LabelPlacement::Above && !text.empty();
     ui.BeginGroup();
+    if (labelAbove) ui.Text(text);
     ui.PushID(label);
     for (int i = 0; i < count; ++i) {
         ui.SetNextItemWidth(i + 1 < count ? each : std::max(1.0f, total - (each + spacing) * float(count - 1)));
@@ -56,7 +58,7 @@ bool MultiComponent(Ui& ui, UiState& g, std::string_view label, int count, Fn co
         if (i + 1 < count) ui.SameLine(0.0f, spacing);
     }
     ui.PopID();
-    if (!text.empty()) {
+    if (!text.empty() && !labelAbove) {
         ui.SameLine(0.0f, spacing);
         ui.Text(text);
     }

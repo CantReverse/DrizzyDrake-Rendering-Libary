@@ -157,6 +157,16 @@ struct TableColumnFlags {
     };
 };
 
+struct TabBarFlags {
+    enum : uint32_t {
+        None = 0,
+        // Tabs stacked in a column down the left of the window (a game-menu sidebar); the selected tab's content goes to
+        // the right of the column. Tabs with no visible label ("##world") leave their cell to an icon you draw over it
+        // (GetItemRectMin/Max right after BeginTabItem).
+        Vertical = 1u << 0,
+    };
+};
+
 // What the user asked to sort by (TableFlags::Sortable). Sort your rows when `dirty`, then clear it.
 struct TableSortSpecs {
     int column = -1;  // -1: not sorted
@@ -174,6 +184,7 @@ enum class UiColor : uint8_t {
     TextSelectedBg, ModalDimBg, MenuBarBg, TableHeaderBg, TableBorder, TableRowBg, TableRowBgAlt,
     Glow,        // glows around checked, active and focused widgets (UiStyle::glowSize)
     AccentText,  // text and marks drawn on an accent fill: a filled checkbox's mark, a solid title, a slider's fill
+    StripeStart, StripeMid, StripeEnd,  // the stripe along the top of a window (UiStyle::windowStripe), left to right
     Count
 };
 
@@ -182,7 +193,7 @@ enum class UiStyleVar : uint8_t {
     Alpha, WindowPadding, WindowRounding, WindowBorderSize, WindowShadowSize, WindowMinSize, FramePadding,
     FrameRounding, FrameBorderSize, ItemSpacing, ItemInnerSpacing, IndentSpacing, ScrollbarSize, ScrollbarRounding,
     GrabMinSize, GrabRounding, PopupRounding, TabRounding, ButtonTextAlign, CellPadding, GlowSize, Gradient, Bevel,
-    HardShadow, KnobShadow,
+    HardShadow, KnobShadow, Shade, WindowStripe, AnimationTime,
     Count
 };
 
@@ -202,16 +213,19 @@ enum class UiTheme : uint8_t {
     Crimson,    // warm charcoal with a red accent
     Dracula,    // the Dracula palette: purple and pink on grey
     Sakura,     // light pink with a rose accent
+    DrizMenu,   // charcoal greys with a lime green accent and a cyan-magenta-yellow window stripe
     Count
 };
 
 enum class UiLook : uint8_t {
-    Classic,  // filled frames, block sliders, check marks, tabs: the Dear ImGui look (the default)
-    Soft,     // large radii, rail sliders with shadowed knobs, filled checkboxes, pill tabs, a borderless title
-    Neon,     // outlined widgets that glow when on or focused, underlined tabs, an accent stripe on the title
-    Flat,     // underlined text fields, thin Material-style toggles and sliders, square corners, no chrome
-    Retro,    // square, outlined and bordered, segmented sliders, a solid title bar and hard offset shadows
-    Glass,    // translucent gradients with a light top edge, pill tabs, filling sliders
+    Classic,   // filled frames, block sliders, check marks, tabs: the Dear ImGui look (the default)
+    Soft,      // large radii, rail sliders with shadowed knobs, filled checkboxes, pill tabs, a borderless title
+    Neon,      // outlined widgets that glow when on or focused, underlined tabs, an accent stripe on the title
+    Flat,      // underlined text fields, thin Material-style toggles and sliders, square corners, no chrome
+    Retro,     // square, outlined and bordered, segmented sliders, a solid title bar and hard offset shadows
+    Glass,     // translucent gradients with a light top edge, pill tabs, filling sliders
+    DrizMenu,  // a beveled window frame with a stripe, small shaded square checkboxes, thin slider bars, labels above
+               // framed widgets and a compact color picker: a classic game-menu look (pairs with UiTheme::DrizMenu)
     Count
 };
 
@@ -230,11 +244,13 @@ enum class SliderShape : uint8_t {
     Rail,      // a thin rail filled up to a round knob, the value to its right
     Fill,      // the frame fills up to the value, which reads over it
     Segments,  // a row of blocks that light up, the value to its right
+    Bar,       // a thin bar that fills up to the value, which reads under the end of the fill
 };
 enum class CheckShape : uint8_t {
     Check,   // a check mark in the box
     Fill,    // the box fills with the accent color, the mark drawn in AccentText
     Square,  // a smaller filled square inside the box
+    Small,   // a small box on the text line that fills with the accent color, no mark (rows as tall as a text line)
 };
 enum class ToggleShape : uint8_t {
     Pill,    // a knob inside a rounded track
@@ -252,6 +268,21 @@ enum class TitleShape : uint8_t {
     Accent,  // a title bar with an accent stripe along its top edge
     Plain,   // the title on the window background, over a separator line
     Solid,   // a title bar filled with the accent color, the title in AccentText
+};
+// How window edges are drawn.
+enum class ChromeShape : uint8_t {
+    Line,   // a line windowBorderSize wide
+    Bevel,  // top-level windows get a raised frame windowBorderSize wide (a dark outline, light bevels, TitleBg
+            // between); child regions, popups and tooltips get a dark outline with a Separator line inside it
+};
+// Where framed widgets (sliders, drags, combos, text fields) put their label.
+enum class LabelPlacement : uint8_t {
+    Right,  // to the right of the frame, on the same line
+    Above,  // on its own line above the frame
+};
+enum class ColorPickerShape : uint8_t {
+    Full,     // saturation/value square, hue and alpha bars side by side, Current/Original swatches, RGBA and hex boxes
+    Compact,  // saturation/value square with the hue bar to its right and the alpha bar under it, nothing else
 };
 
 // The handful of colors a theme is built from; UiStyle::ApplyPalette derives every UiColor from them.
@@ -301,11 +332,22 @@ struct UiStyle {
     ToggleShape toggleShape = ToggleShape::Pill;
     TabShape tabShape = TabShape::Tab;
     TitleShape titleShape = TitleShape::Bar;
+    ChromeShape chromeShape = ChromeShape::Line;
+    LabelPlacement labelPlacement = LabelPlacement::Right;
+    ColorPickerShape colorPickerShape = ColorPickerShape::Full;
     float glowSize = 0.0f;     // blur radius of the glow (UiColor::Glow) around checked, active and focused widgets; 0 = off
     float gradient = 0.0f;     // 0..1: vertical shading of buttons, frames, title bars and windows (light top, dark bottom)
     float bevel = 0.0f;        // 0..1: opacity of a light line along the top inside edge of buttons and frames
     Vec2 hardShadow = {};      // offset of a solid shadow (UiColor::WindowShadow) under windows and buttons; 0 = off
     float knobShadow = 0.0f;   // 0..1: opacity of a soft shadow under slider and toggle knobs
+    float shade = 0.0f;        // 0..1: fills of frames, buttons, checkboxes, slider fills and swatches keep their color at
+                               // the top and darken toward the bottom by this much (used when gradient is 0)
+    float windowStripe = 0.0f;  // height of a stripe (StripeStart -> StripeMid -> StripeEnd) along the top inside edge of
+                                // top-level windows with ChromeShape::Bevel; 0 = none
+    float animationTime = 0.0f;  // seconds a tab switch takes: the old tab's contents slide up and fade out while the
+                                 // new tab's slide up into place and fade in. Vertical tab labels brighten under the
+                                 // mouse, and popups, menus, combo lists, pickers and tooltips fade in, over a part of
+                                 // it. 0 = instant. (To fade a whole menu in and out with its toggle key: Ui::Animate.)
 
     Color colors[size_t(UiColor::Count)] = {};
 
@@ -416,6 +458,10 @@ public:
     // Always call EndChild().
     bool BeginChild(std::string_view id, Vec2 size = {}, bool border = false, uint32_t flags = WindowFlags::None);
     void EndChild();
+    // A bordered panel (a child region) with its title set into the top border, for grouping settings. The label is
+    // also its ID ("##" hides the rest, as usual). Size as BeginChild. Always call EndGroupBox().
+    bool BeginGroupBox(std::string_view label, Vec2 size = {}, uint32_t flags = WindowFlags::None);
+    void EndGroupBox();
     // Pivot (0..1) picks which point of the window lands on `pos`: {0.5, 0.5} centers it.
     void SetNextWindowPos(Vec2 pos, Cond cond = Cond::Always, Vec2 pivot = {});
     // A component of 0 sizes that axis to the content.
@@ -475,6 +521,16 @@ public:
     void BeginDisabled(bool disabled = true);  // greys out and blocks interaction
     void EndDisabled();
     Color GetColor(UiColor color, float alphaScale = 1.0f) const;  // style color with current alpha applied
+    float GetAlpha() const;  // the current opacity: style alpha, disabled items and fade-ins; multiply your own colors by it
+
+    // ---- Animation --------------------------------------------------------------------------------------------------
+    // A value kept under `id` (starting at 0) that moves toward `target` by deltaTime / `duration` each call, and is
+    // returned: a linear ramp, `duration` seconds for a change of 1. No allocation after its first call. Fading a whole
+    // menu in and out with its toggle key, which the library cannot do by itself (a closed window is not submitted):
+    //
+    //   const float fade = ui.Animate("menu", menuOpen ? 1.0f : 0.0f, 0.15f);
+    //   if (fade > 0.0f) { ui.PushStyleVar(UiStyleVar::Alpha, fade); BuildMenu(ui); ui.PopStyleVar(); }
+    float Animate(std::string_view id, float target, float duration);
 
     // ---- Text -------------------------------------------------------------------------------------------------------
     void Text(std::string_view text);
@@ -562,7 +618,8 @@ public:
     bool ColorButton(std::string_view id, Color color, Vec2 size = {}, uint32_t flags = ColorEditFlags::None);
     // R/G/B(/A) or hex boxes, a swatch and the label. Clicking the swatch opens the picker in a popup, which edits
     // `color` in place (Escape or a click outside closes it; its "Original" swatch restores the color it opened with).
-    // With ColorEditFlags::NoInputs it is just the swatch button and the label.
+    // Right-clicking the swatch offers Copy and Paste between color edits. With ColorEditFlags::NoInputs it is just the
+    // swatch button and the label (with ColorPickerShape::Compact, a slim swatch as tall as a text line).
     bool ColorEdit3(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None);
     bool ColorEdit4(std::string_view label, Color* color, uint32_t flags = ColorEditFlags::None);
     // The full picker: saturation/value square, hue bar, and (unless NoAlpha) an alpha bar, with "Current" and (given
@@ -599,10 +656,17 @@ public:
     void SetNextItemOpen(bool open, Cond cond = Cond::Always);
 
     // ---- Tabs -------------------------------------------------------------------------------------------------------
-    bool BeginTabBar(std::string_view id);  // EndTabBar() if it returned true
+    // EndTabBar() if it returned true. `tabSize` sizes TabBarFlags::Vertical cells: x is the column's width, y each
+    // tab's height (0: about six em wide, two frame heights tall).
+    bool BeginTabBar(std::string_view id, uint32_t flags = TabBarFlags::None, Vec2 tabSize = {});
     void EndTabBar();
-    bool BeginTabItem(std::string_view label);  // EndTabItem() if it returned true; true for the selected tab
+    // EndTabItem() if it returned true; true for the selected tab. With UiStyle::animationTime, for a moment after a
+    // switch it also returns true for the tab that was selected before: its contents slide out (faded, without input)
+    // while the new tab's slide in. Draw a tab's contents whenever it returns true; use IsTabItemSelected() (right
+    // after it) for anything that must only follow the selected tab.
+    bool BeginTabItem(std::string_view label);
     void EndTabItem();
+    bool IsTabItemSelected() const;  // the last BeginTabItem's tab is the selected one
 
     // ---- Popups, modals, tooltips -----------------------------------------------------------------------------------
     void OpenPopup(std::string_view id);

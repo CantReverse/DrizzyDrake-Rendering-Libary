@@ -146,12 +146,15 @@ bool LazyInit(IDXGISwapChain* swapChain) {
         if (g->api == Api::D3D12 && SUCCEEDED(swapChain->GetDevice(IID_PPV_ARGS(&device)))) {
             g->queueCapture.SetDevice(device.Get());  // only this game's present queue
         }
-        // Whenever the overlay (re)creates a device, its textures must be made on that device: the font atlas and the
-        // gallery's checker. The atlas keeps its pixels (not released) so it can be re-uploaded after a device change.
+        // Whenever the overlay (re)creates a device, its textures must be made on that device: the font atlas, the
+        // gallery's checker and the DrizMenu demo's background. The atlas keeps its pixels (not released) so it can be
+        // re-uploaded after a device change.
         auto uploadAssets = [](auto& renderer) {
             g->atlas.SetTexture(renderer.CreateTexture(g->atlas.Width(), g->atlas.Height(), g->atlas.Pixels()));
             const std::vector<uint32_t> pixels = MakeChecker();
             g->checker = renderer.CreateTexture(64, 64, pixels.data());
+            const std::vector<uint32_t> carbon = demo::CarbonPixels(256);
+            demo::Gallery().carbon = renderer.CreateTexture(256, 256, carbon.data());
             g->ui.SetPrimAllocator(&renderer);  // record straight into the overlay's GPU memory
         };
         g->d11.SetDeviceCallback(uploadAssets);
@@ -184,7 +187,13 @@ void RenderOverlay(IDXGISwapChain* swapChain) {
     g->input.NewFrame(g->ui, g->hwnd);
     g->ui.Input().deltaTime = Clamp(dt, 1.0f / 1000.0f, 0.1f);  // guard against stalls and a bad first delta
     g->ui.NewFrame();
-    if (g->menuVisible) BuildMenu(g->ui);
+    // Insert fades the menu in and out. Once it has faded out nothing is drawn, so the closed overlay costs nothing.
+    const float fade = g->ui.Animate("##menu_fade", g->menuVisible ? 1.0f : 0.0f, 0.08f);  // ~80 ms, linear
+    if (fade > 0.0f) {
+        g->ui.PushStyleVar(UiStyleVar::Alpha, fade);
+        BuildMenu(g->ui);
+        g->ui.PopStyleVar();
+    }
     const DrawData& data = g->ui.Render();
 
     if (g->api == Api::D3D12) {

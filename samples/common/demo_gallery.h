@@ -3,6 +3,7 @@
 #pragma once
 
 #include "demo_backdrops.h"
+#include "demo_drizmenu.h"
 #include "demo_fonts.h"
 
 #include "drizzy/ui.h"
@@ -24,6 +25,8 @@ struct GallerySettings {
     Backdrop backdrop;
     bool backdropThemeColors = true;  // backdrop colors follow the theme (text and accent) instead of `backdropColors`
     BackdropColors backdropColors;
+    bool showDrizMenu = false;                       // View > DrizMenu demo
+    drizzy::TextureId carbon = drizzy::kNoTexture;   // its background pattern (CarbonPixels), set by the host
 };
 GallerySettings& Gallery();
 
@@ -33,7 +36,7 @@ void ApplyGallerySettings(drizzy::Ui& ui);
 // The widget gallery window. Pass an image texture to show Image / ImageButton; pass `open` to make it closable.
 void ShowWidgetGallery(drizzy::Ui& ui, drizzy::TextureId image = drizzy::kNoTexture, bool* open = nullptr);
 
-// Six small mod-menu windows side by side, each in its own look (and a theme and font that suit it), for comparing
+// One small mod-menu window per look side by side (each with a theme and font that suit it), for comparing
 // looks; or (`themes` = true) one window per theme in the current look. The Ui's style is restored afterwards.
 void ShowStyleShowcase(drizzy::Ui& ui, bool themes = false);
 

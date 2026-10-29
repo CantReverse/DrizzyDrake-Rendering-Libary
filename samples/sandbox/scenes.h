@@ -11,6 +11,7 @@ namespace sandbox {
 struct SceneAssets {
     const drizzy::Font* font = nullptr;
     drizzy::TextureId checker = drizzy::kNoTexture;
+    drizzy::TextureId carbon = drizzy::kNoTexture;  // the DrizMenu demo's background
 };
 
 // Every shape type on a 1280x720 canvas, one feature per captioned cell.

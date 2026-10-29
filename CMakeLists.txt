@@ -193,6 +193,8 @@ if(DRIZZY_BUILD_SAMPLES AND DRIZZY_BUILD_D3D11 AND DRIZZY_BUILD_D3D12)
     samples/common/demo_gallery.cpp
     samples/common/demo_backdrops.h
     samples/common/demo_backdrops.cpp
+    samples/common/demo_drizmenu.h
+    samples/common/demo_drizmenu.cpp
     samples/common/demo_fonts.h
     samples/common/demo_fonts.cpp
     ${_demo_font_sources})

@@ -18,8 +18,11 @@ namespace {
 
 const char* const kFrameShapes[] = {"Filled", "Outline", "Underline"};
 const char* const kButtonShapes[] = {"Filled", "Outline"};
-const char* const kSliderShapes[] = {"Block", "Rail", "Fill", "Segments"};
-const char* const kCheckShapes[] = {"Check mark", "Filled box", "Square"};
+const char* const kSliderShapes[] = {"Block", "Rail", "Fill", "Segments", "Thin bar"};
+const char* const kCheckShapes[] = {"Check mark", "Filled box", "Square", "Small box"};
+const char* const kChromeShapes[] = {"Line", "Bevel frame"};
+const char* const kLabelPlacements[] = {"Right", "Above"};
+const char* const kColorPickerShapes[] = {"Full", "Compact"};
 const char* const kToggleShapes[] = {"Pill", "Thin (Material)", "Square"};
 const char* const kTabShapes[] = {"Tabs", "Underline", "Pills", "Boxes"};
 const char* const kTitleShapes[] = {"Bar", "Accent stripe", "Plain", "Solid accent"};
@@ -30,6 +33,7 @@ const char* const kLookDescriptions[] = {
     "Underlined text fields, thin Material toggles, no chrome.",
     "Square and outlined, segmented sliders, a solid title bar, hard shadows.",
     "Translucent gradients with a light top edge, filling sliders, pill tabs.",
+    "A beveled frame with a color stripe, small shaded checkboxes, thin sliders.",
 };
 static_assert(sizeof(kLookDescriptions) / sizeof(kLookDescriptions[0]) == size_t(UiLook::Count), "one per look");
 
@@ -679,19 +683,24 @@ void CustomizeTab(Ui& ui) {
         ui.TextDisabled("Mix and match: every part of a style can be changed on its own.");
         EnumCombo(ui, "Text fields", &style.frameShape, kFrameShapes, 3);
         EnumCombo(ui, "Buttons", &style.buttonShape, kButtonShapes, 2);
-        EnumCombo(ui, "Sliders", &style.sliderShape, kSliderShapes, 4);
-        EnumCombo(ui, "Checkboxes", &style.checkShape, kCheckShapes, 3);
+        EnumCombo(ui, "Sliders", &style.sliderShape, kSliderShapes, 5);
+        EnumCombo(ui, "Checkboxes", &style.checkShape, kCheckShapes, 4);
         EnumCombo(ui, "Toggles", &style.toggleShape, kToggleShapes, 3);
         EnumCombo(ui, "Tabs", &style.tabShape, kTabShapes, 4);
         EnumCombo(ui, "Title bar", &style.titleShape, kTitleShapes, 4);
+        EnumCombo(ui, "Window edges", &style.chromeShape, kChromeShapes, 2);
+        EnumCombo(ui, "Labels", &style.labelPlacement, kLabelPlacements, 2);
+        EnumCombo(ui, "Color picker", &style.colorPickerShape, kColorPickerShapes, 2);
         ui.SliderFloat("Glow", &style.glowSize, 0.0f, 24.0f, "%.0f px");
         ui.SliderFloat("Gradient", &style.gradient, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Shade", &style.shade, 0.0f, 1.0f, "%.2f");
+        ui.SliderFloat("Window stripe", &style.windowStripe, 0.0f, 6.0f, "%.0f px");
         ui.SliderFloat("Bevel", &style.bevel, 0.0f, 1.0f, "%.2f");
         ui.SliderFloat("Knob shadow", &style.knobShadow, 0.0f, 1.0f, "%.2f");
         ui.DragFloat2("Hard shadow", &style.hardShadow.x, 0.1f, -12.0f, 12.0f, "%.0f");
         ui.SliderFloat("Window rounding", &style.windowRounding, 0.0f, 20.0f, "%.0f");
         ui.SliderFloat("Frame rounding", &style.frameRounding, 0.0f, 14.0f, "%.0f");
-        ui.SliderFloat("Window border", &style.windowBorderSize, 0.0f, 3.0f, "%.0f");
+        ui.SliderFloat("Window border", &style.windowBorderSize, 0.0f, 8.0f, "%.0f");
         ui.SliderFloat("Frame border", &style.frameBorderSize, 0.0f, 2.0f, "%.0f");
         ui.SliderFloat("Window shadow", &style.windowShadowSize, 0.0f, 48.0f, "%.0f");
         ui.DragFloat2("Item spacing", &style.itemSpacing.x, 0.2f, 0.0f, 24.0f, "%.0f");
@@ -745,18 +754,22 @@ void ViewMenu(Ui& ui) {
         }
         ui.EndMenu();
     }
+    ui.Separator();
+    if (ui.MenuItem("DrizMenu demo", {}, s.showDrizMenu)) s.showDrizMenu = !s.showDrizMenu;
 }
 
-// A compact mod menu for the showcase; `i` keeps each window's values apart.
+// A compact mod menu for the showcase; `i` keeps each window's values apart (one per theme or look).
 void MiniMenu(Ui& ui, int i) {
-    static bool god[9], noclip[9], ammo[9], esp[9];
-    static float speed[9];
-    static int jump[9], quality[9], weather[9];
-    static char name[9][24];
-    static Color tint[9];
+    constexpr int kMax = 16;
+    static_assert(int(UiTheme::Count) <= kMax && int(UiLook::Count) <= kMax, "one set of values per showcase window");
+    static bool god[kMax], noclip[kMax], ammo[kMax], esp[kMax];
+    static float speed[kMax];
+    static int jump[kMax], quality[kMax], weather[kMax];
+    static char name[kMax][24];
+    static Color tint[kMax];
     static bool initialized = false;
     if (!initialized) {
-        for (int k = 0; k < 9; ++k) {
+        for (int k = 0; k < kMax; ++k) {
             god[k] = esp[k] = true;
             speed[k] = 6.5f;
             jump[k] = 40;
@@ -815,6 +828,13 @@ void ApplyGallerySettings(Ui& ui) {
 }
 
 void ShowWidgetGallery(Ui& ui, TextureId image, bool* open) {
+    // The DrizMenu demo: its own window, in its own style, fading in and out as View > DrizMenu demo toggles it.
+    const float drizMenuFade = ui.Animate("##drizmenu_fade", Gallery().showDrizMenu ? 1.0f : 0.0f, 0.08f);
+    if (drizMenuFade > 0.0f) {
+        ui.PushStyleVar(UiStyleVar::Alpha, drizMenuFade);
+        ShowDrizMenu(ui, Gallery().carbon);
+        ui.PopStyleVar();
+    }
     // On first use, wide enough for every tab label in the current font (fonts differ a lot in width).
     const UiStyle& style = ui.Style();
     const float tabsWidth = ui.CalcTextSize("BasicsInputColorListsTreesPopupsPlotsTablesExtrasLayoutCustomize").x +
@@ -893,12 +913,14 @@ void ShowStyleShowcase(Ui& ui, bool themes) {
         {UiTheme::Light, UiLook::Flat, "Inter", BackdropKind::Waves},
         {UiTheme::Emerald, UiLook::Retro, "Monocraft", BackdropKind::MatrixRain},
         {UiTheme::Dracula, UiLook::Glass, "Rajdhani", BackdropKind::Gradient},
+        {UiTheme::DrizMenu, UiLook::DrizMenu, "Verdana", BackdropKind::None},
     };
-    static Backdrop backdrops[9];
+    static_assert(sizeof(kLooks) / sizeof(kLooks[0]) == size_t(UiLook::Count), "one showcase window per look");
+    static Backdrop backdrops[int(UiLook::Count)];
     const GallerySettings& s = Gallery();
     const UiStyle saved = ui.Style();
     const int count = themes ? int(UiTheme::Count) : int(sizeof(kLooks) / sizeof(kLooks[0]));
-    const int columns = 3, rows = (count + columns - 1) / columns;
+    const int columns = count > 6 ? 4 : 3, rows = (count + columns - 1) / columns;
     const Vec2 display = ui.GetDisplaySize();
     const float margin = 24.0f;
     const Vec2 cell((display.x - margin * float(columns + 1)) / float(columns),

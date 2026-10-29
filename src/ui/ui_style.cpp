@@ -43,6 +43,9 @@ const VarInfo kVarInfo[] = {
     {DZ_OBF("bevel"), 1, offsetof(UiStyle, bevel)},
     {DZ_OBF("hardShadow"), 2, offsetof(UiStyle, hardShadow)},
     {DZ_OBF("knobShadow"), 1, offsetof(UiStyle, knobShadow)},
+    {DZ_OBF("shade"), 1, offsetof(UiStyle, shade)},
+    {DZ_OBF("windowStripe"), 1, offsetof(UiStyle, windowStripe)},
+    {DZ_OBF("animationTime"), 1, offsetof(UiStyle, animationTime)},
 };
 static_assert(sizeof(kVarInfo) / sizeof(kVarInfo[0]) == size_t(UiStyleVar::Count), "kVarInfo must match UiStyleVar");
 
@@ -56,7 +59,8 @@ const VarInfo kExtraKeys[] = {
 bool IsUnitless(size_t offset) {
     return offset == offsetof(UiStyle, alpha) || offset == offsetof(UiStyle, buttonTextAlign) ||
            offset == offsetof(UiStyle, gradient) || offset == offsetof(UiStyle, bevel) ||
-           offset == offsetof(UiStyle, knobShadow);
+           offset == offsetof(UiStyle, knobShadow) || offset == offsetof(UiStyle, shade) ||
+           offset == offsetof(UiStyle, animationTime);
 }
 
 // The shape settings: one-byte enums, written to theme files by name. Names are encrypted (detail::ObfEntry).
@@ -68,19 +72,26 @@ struct ShapeInfo {
 };
 const detail::ObfEntry kFrameShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline"), DZ_OBF("Underline")};
 const detail::ObfEntry kButtonShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline")};
-const detail::ObfEntry kSliderShapes[] = {DZ_OBF("Block"), DZ_OBF("Rail"), DZ_OBF("Fill"), DZ_OBF("Segments")};
-const detail::ObfEntry kCheckShapes[] = {DZ_OBF("Check"), DZ_OBF("Fill"), DZ_OBF("Square")};
+const detail::ObfEntry kSliderShapes[] = {DZ_OBF("Block"), DZ_OBF("Rail"), DZ_OBF("Fill"), DZ_OBF("Segments"),
+                                          DZ_OBF("Bar")};
+const detail::ObfEntry kCheckShapes[] = {DZ_OBF("Check"), DZ_OBF("Fill"), DZ_OBF("Square"), DZ_OBF("Small")};
 const detail::ObfEntry kToggleShapes[] = {DZ_OBF("Pill"), DZ_OBF("Thin"), DZ_OBF("Square")};
 const detail::ObfEntry kTabShapes[] = {DZ_OBF("Tab"), DZ_OBF("Underline"), DZ_OBF("Pill"), DZ_OBF("Box")};
 const detail::ObfEntry kTitleShapes[] = {DZ_OBF("Bar"), DZ_OBF("Accent"), DZ_OBF("Plain"), DZ_OBF("Solid")};
+const detail::ObfEntry kChromeShapes[] = {DZ_OBF("Line"), DZ_OBF("Bevel")};
+const detail::ObfEntry kLabelPlacements[] = {DZ_OBF("Right"), DZ_OBF("Above")};
+const detail::ObfEntry kColorPickerShapes[] = {DZ_OBF("Full"), DZ_OBF("Compact")};
 const ShapeInfo kShapeInfo[] = {
     {DZ_OBF("frameShape"), offsetof(UiStyle, frameShape), kFrameShapes, 3},
     {DZ_OBF("buttonShape"), offsetof(UiStyle, buttonShape), kButtonShapes, 2},
-    {DZ_OBF("sliderShape"), offsetof(UiStyle, sliderShape), kSliderShapes, 4},
-    {DZ_OBF("checkShape"), offsetof(UiStyle, checkShape), kCheckShapes, 3},
+    {DZ_OBF("sliderShape"), offsetof(UiStyle, sliderShape), kSliderShapes, 5},
+    {DZ_OBF("checkShape"), offsetof(UiStyle, checkShape), kCheckShapes, 4},
     {DZ_OBF("toggleShape"), offsetof(UiStyle, toggleShape), kToggleShapes, 3},
     {DZ_OBF("tabShape"), offsetof(UiStyle, tabShape), kTabShapes, 4},
     {DZ_OBF("titleShape"), offsetof(UiStyle, titleShape), kTitleShapes, 4},
+    {DZ_OBF("chromeShape"), offsetof(UiStyle, chromeShape), kChromeShapes, 2},
+    {DZ_OBF("labelPlacement"), offsetof(UiStyle, labelPlacement), kLabelPlacements, 2},
+    {DZ_OBF("colorPickerShape"), offsetof(UiStyle, colorPickerShape), kColorPickerShapes, 2},
 };
 
 const detail::ObfEntry kColorNames[] = {
@@ -93,16 +104,16 @@ const detail::ObfEntry kColorNames[] = {
     DZ_OBF("ResizeGripActive"), DZ_OBF("Tab"), DZ_OBF("TabHovered"), DZ_OBF("TabActive"), DZ_OBF("PlotLines"),
     DZ_OBF("PlotHistogram"), DZ_OBF("TextSelectedBg"), DZ_OBF("ModalDimBg"), DZ_OBF("MenuBarBg"),
     DZ_OBF("TableHeaderBg"), DZ_OBF("TableBorder"), DZ_OBF("TableRowBg"), DZ_OBF("TableRowBgAlt"), DZ_OBF("Glow"),
-    DZ_OBF("AccentText"),
+    DZ_OBF("AccentText"), DZ_OBF("StripeStart"), DZ_OBF("StripeMid"), DZ_OBF("StripeEnd"),
 };
 static_assert(sizeof(kColorNames) / sizeof(kColorNames[0]) == size_t(UiColor::Count), "kColorNames must match UiColor");
 
 const detail::ObfEntry kThemeNames[] = {DZ_OBF("Dark"), DZ_OBF("Light"), DZ_OBF("Obsidian"), DZ_OBF("Cyberpunk"),
                                         DZ_OBF("Nord"), DZ_OBF("Emerald"), DZ_OBF("Crimson"), DZ_OBF("Dracula"),
-                                        DZ_OBF("Sakura")};
+                                        DZ_OBF("Sakura"), DZ_OBF("DrizMenu")};
 static_assert(sizeof(kThemeNames) / sizeof(kThemeNames[0]) == size_t(UiTheme::Count), "kThemeNames must match UiTheme");
-const detail::ObfEntry kLookNames[] = {DZ_OBF("Classic"), DZ_OBF("Soft"), DZ_OBF("Neon"),
-                                       DZ_OBF("Flat"), DZ_OBF("Retro"), DZ_OBF("Glass")};
+const detail::ObfEntry kLookNames[] = {DZ_OBF("Classic"), DZ_OBF("Soft"),  DZ_OBF("Neon"),    DZ_OBF("Flat"),
+                                       DZ_OBF("Retro"),   DZ_OBF("Glass"), DZ_OBF("DrizMenu")};
 static_assert(sizeof(kLookNames) / sizeof(kLookNames[0]) == size_t(UiLook::Count), "kLookNames must match UiLook");
 
 std::string_view Trim(std::string_view s) {
@@ -212,6 +223,9 @@ void SetDarkColors(Color* c) {
     c[size_t(UiColor::TableRowBgAlt)] = Rgba(255, 255, 255, 9);
     c[size_t(UiColor::Glow)] = WithAlpha(accent, 0xB0);
     c[size_t(UiColor::AccentText)] = colors::White;
+    c[size_t(UiColor::StripeStart)] = Hex(0x3FC8E8);
+    c[size_t(UiColor::StripeMid)] = accent;
+    c[size_t(UiColor::StripeEnd)] = Hex(0xB18CFF);
 }
 
 void SetLightColors(Color* c) {
@@ -259,6 +273,61 @@ void SetLightColors(Color* c) {
     c[size_t(UiColor::TableRowBgAlt)] = Rgba(0, 0, 0, 10);
     c[size_t(UiColor::Glow)] = WithAlpha(accent, 0x80);
     c[size_t(UiColor::AccentText)] = colors::White;
+    c[size_t(UiColor::StripeStart)] = Hex(0x1FA9D6);
+    c[size_t(UiColor::StripeMid)] = accent;
+    c[size_t(UiColor::StripeEnd)] = Hex(0x8B5CF6);
+}
+
+// Charcoal greys and a lime accent, measured from a classic game menu: dark outlines (#0A0A0A) around everything, a
+// lighter line inside group boxes (Separator), and a cyan -> magenta -> yellow window stripe.
+void SetDrizMenuColors(Color* c) {
+    const Color accent = Hex(0x87B535);
+    c[size_t(UiColor::Text)] = Hex(0xD5D5D5);
+    c[size_t(UiColor::TextDisabled)] = Hex(0x646464);  // also the unselected icons of a vertical tab bar
+    c[size_t(UiColor::WindowBg)] = Hex(0x131313);
+    c[size_t(UiColor::ChildBg)] = Hex(0x111111);
+    c[size_t(UiColor::PopupBg)] = Hex(0x1C1C1C);
+    c[size_t(UiColor::Border)] = Hex(0x0A0A0A);
+    c[size_t(UiColor::WindowShadow)] = Rgba(0, 0, 0, 150);
+    c[size_t(UiColor::FrameBg)] = Hex(0x232323);
+    c[size_t(UiColor::FrameBgHovered)] = Hex(0x2A2A2A);
+    c[size_t(UiColor::FrameBgActive)] = Hex(0x303030);
+    c[size_t(UiColor::TitleBg)] = Hex(0x282828);  // also the window frame (ChromeShape::Bevel)
+    c[size_t(UiColor::TitleBgActive)] = Hex(0x1C1C1C);
+    c[size_t(UiColor::ScrollbarBg)] = Hex(0x2D2D2D);
+    c[size_t(UiColor::ScrollbarGrab)] = Hex(0x414141);
+    c[size_t(UiColor::ScrollbarGrabHovered)] = Hex(0x4C4C4C);
+    c[size_t(UiColor::ScrollbarGrabActive)] = Hex(0x585858);
+    c[size_t(UiColor::CheckMark)] = accent;
+    c[size_t(UiColor::SliderGrab)] = accent;
+    c[size_t(UiColor::SliderGrabActive)] = Hex(0x9ACB3E);
+    c[size_t(UiColor::Button)] = Hex(0x262626);
+    c[size_t(UiColor::ButtonHovered)] = Hex(0x2E2E2E);
+    c[size_t(UiColor::ButtonActive)] = Hex(0x1E1E1E);
+    c[size_t(UiColor::Header)] = Rgba(255, 255, 255, 12);
+    c[size_t(UiColor::HeaderHovered)] = Rgba(255, 255, 255, 20);
+    c[size_t(UiColor::HeaderActive)] = Rgba(255, 255, 255, 30);
+    c[size_t(UiColor::Separator)] = Hex(0x303030);
+    c[size_t(UiColor::ResizeGrip)] = Rgba(255, 255, 255, 20);
+    c[size_t(UiColor::ResizeGripHovered)] = WithAlpha(accent, 0xA0);
+    c[size_t(UiColor::ResizeGripActive)] = WithAlpha(accent, 0xE0);
+    c[size_t(UiColor::Tab)] = Hex(0x0C0C0C);
+    c[size_t(UiColor::TabHovered)] = Hex(0x101010);
+    c[size_t(UiColor::TabActive)] = Hex(0x131313);
+    c[size_t(UiColor::PlotLines)] = accent;
+    c[size_t(UiColor::PlotHistogram)] = accent;
+    c[size_t(UiColor::TextSelectedBg)] = WithAlpha(accent, 0x60);
+    c[size_t(UiColor::ModalDimBg)] = Rgba(0, 0, 0, 140);
+    c[size_t(UiColor::MenuBarBg)] = Hex(0x171717);
+    c[size_t(UiColor::TableHeaderBg)] = Hex(0x1C1C1C);
+    c[size_t(UiColor::TableBorder)] = Hex(0x303030);
+    c[size_t(UiColor::TableRowBg)] = Rgba(0, 0, 0, 0);
+    c[size_t(UiColor::TableRowBgAlt)] = Rgba(255, 255, 255, 6);
+    c[size_t(UiColor::Glow)] = WithAlpha(accent, 0x90);
+    c[size_t(UiColor::AccentText)] = Hex(0x0C0C0C);
+    c[size_t(UiColor::StripeStart)] = Hex(0x37B1DA);
+    c[size_t(UiColor::StripeMid)] = Hex(0xC855C0);
+    c[size_t(UiColor::StripeEnd)] = Hex(0xCCE438);
 }
 
 // The sizes, shapes and effects of each look, applied over the classic defaults (the UiStyle member initializers).
@@ -366,6 +435,34 @@ void SetLook(UiStyle& s, UiLook look) {
         s.bevel = 0.45f;
         s.knobShadow = 0.5f;
         break;
+    case UiLook::DrizMenu:
+        s.windowPadding = {14.0f, 12.0f};
+        s.windowRounding = 0.0f;
+        s.windowBorderSize = 6.0f;  // the beveled frame
+        s.windowShadowSize = 0.0f;
+        s.framePadding = {8.0f, 3.0f};
+        s.frameRounding = 0.0f;
+        s.frameBorderSize = 1.0f;
+        s.itemSpacing = {8.0f, 4.0f};
+        s.itemInnerSpacing = {10.0f, 4.0f};
+        s.indentSpacing = 16.0f;
+        s.scrollbarSize = 8.0f;
+        s.scrollbarRounding = 0.0f;
+        s.grabMinSize = 8.0f;
+        s.grabRounding = 0.0f;
+        s.popupRounding = 0.0f;
+        s.tabRounding = 0.0f;
+        s.sliderShape = SliderShape::Bar;
+        s.checkShape = CheckShape::Small;
+        s.toggleShape = ToggleShape::Square;
+        s.tabShape = TabShape::Underline;
+        s.chromeShape = ChromeShape::Bevel;
+        s.labelPlacement = LabelPlacement::Above;
+        s.colorPickerShape = ColorPickerShape::Compact;
+        s.shade = 0.3f;
+        s.windowStripe = 2.0f;
+        s.animationTime = 0.15f;
+        break;
     default:
         break;
     }
@@ -446,6 +543,10 @@ UiPalette UiStyle::ThemePalette(UiTheme theme) {
         p = {Hex(0xFFF4F7, 0xF8), Hex(0xF9DDE6), Hex(0x3B2530), Hex(0xE0457B), colors::White, Hex(0xFF6F9F, 0x90),
              Rgba(120, 30, 60, 40), Rgba(90, 20, 50, 70), 0, true};
         break;
+    case UiTheme::DrizMenu:  // approximate: ApplyTheme uses hand-tuned colors
+        p = {Hex(0x131313), Hex(0x232323), Hex(0xD5D5D5), Hex(0x87B535), Hex(0x0C0C0C), Hex(0x87B535, 0x90),
+             Hex(0x0A0A0A), Rgba(0, 0, 0, 150), Hex(0x37B1DA), false};
+        break;
     default:  // Dark
         p = {Hex(0x1B1D24, 0xF2), Hex(0x2A2E39), Hex(0xE6E8EF), Hex(0x5B8CFF), colors::White, Hex(0x5B8CFF, 0xB0),
              Rgba(255, 255, 255, 26), Rgba(0, 0, 0, 150), 0, false};
@@ -455,9 +556,10 @@ UiPalette UiStyle::ThemePalette(UiTheme theme) {
 }
 
 void UiStyle::ApplyTheme(UiTheme theme) {
-    // Dark and Light keep their hand-tuned colors; the others are derived from their palettes.
+    // Dark, Light and DrizMenu keep their hand-tuned colors; the others are derived from their palettes.
     if (theme == UiTheme::Dark) SetDarkColors(colors);
     else if (theme == UiTheme::Light) SetLightColors(colors);
+    else if (theme == UiTheme::DrizMenu) SetDrizMenuColors(colors);
     else ApplyPalette(ThemePalette(theme));
 }
 
@@ -511,6 +613,9 @@ void UiStyle::ApplyPalette(const UiPalette& p) {
     set(UiColor::TableRowBgAlt, WithAlpha(text, 0x0A));
     set(UiColor::Glow, p.glow);
     set(UiColor::AccentText, p.accentText);
+    set(UiColor::StripeStart, p.secondary ? p.secondary : mix(accent, text, 0.35f));
+    set(UiColor::StripeMid, accent);
+    set(UiColor::StripeEnd, WithAlpha(p.glow, 255));
 }
 
 void UiStyle::ApplyLook(UiLook look) {

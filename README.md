@@ -24,9 +24,10 @@ that already has a device and a swap chain.
   and outlines, drop shadows and glow cost no extra geometry.
 - **A complete, familiar UI.** If you have used Dear ImGui, you already know the API: windows, menus, tables, color
   pickers, text input, plots, popups, themes and more.
-- **It doesn't have to look like Dear ImGui.** Nine color themes and six widget styles combine freely: glowing neon,
-  soft, flat, retro, glass or classic. The sample menu changes them live, along with fonts (including a Minecraft-style
-  pixel font), every color and an animated background. [See them.](#make-it-look-like-your-game)
+- **It doesn't have to look like Dear ImGui.** Ten color themes and seven widget styles combine freely: glowing neon,
+  soft, flat, retro, glass, classic, or DrizMenu, a classic game-menu style with a beveled frame, icon tabs and group
+  boxes. The sample menu changes them live, along with fonts (including a Minecraft-style pixel font), every color and
+  an animated background. [See them.](#make-it-look-like-your-game)
 - **Survives what games do.** Resizes, fullscreen switches, device loss, new devices, and HDR back buffers (sRGB, scRGB
   and HDR10, detected automatically) are all handled.
 - **Nothing extra to ship.** Static libraries with stb_truetype and msdfgen compiled in, and shaders compiled at build
@@ -76,17 +77,20 @@ ui.Style().ApplyLook(drizzy::UiLook::Neon);         // shapes, sizes and effects
 | Flat | Underlined text fields, thin Material-style toggles and sliders, square corners and no chrome. |
 | Retro | Square and outlined, segmented sliders and progress bars, a solid title bar and hard offset shadows. |
 | Glass | Translucent gradients with a light top edge, sliders that fill up, and pill tabs. |
+| DrizMenu | A classic game menu: a beveled window frame with a color stripe, small shaded checkboxes, thin slider bars, labels above sliders and combos, a compact color picker, and sliding tab transitions. |
 
-**Themes** (`UiTheme`): Dark, Light, Obsidian, Cyberpunk, Nord, Emerald, Crimson, Dracula and Sakura. For a theme of your
-own, give `UiStyle::ApplyPalette` a handful of colors (background, widgets, text, accent, glow, border) and every UI
-color is derived from them.
+**Themes** (`UiTheme`): Dark, Light, Obsidian, Cyberpunk, Nord, Emerald, Crimson, Dracula, Sakura and DrizMenu
+(charcoal greys, a lime accent and a cyan-magenta-yellow stripe). For a theme of your own, give `UiStyle::ApplyPalette` a
+handful of colors (background, widgets, text, accent, glow, border) and every UI color is derived from them.
 
 ![Every theme in the Soft style](docs/images/themes.png)
 
 **Mix and match.** A style is a set of plain fields in `UiStyle`, so every part of it can change on its own: the shape of
-text fields (filled, outline, underline), buttons, sliders (block, rail, fill, segments), checkboxes, toggles, tabs and
-title bars, and the glow, gradient, bevel, knob shadow and hard shadow effects. They load and save with the rest of a
-text theme (`LoadTheme` / `SaveTheme`), which can also start from a built-in one with `theme = Nord` and `look = Neon`.
+text fields (filled, outline, underline), buttons, sliders (block, rail, fill, segments, thin bar), checkboxes (including
+small boxes on the text line), toggles, tabs, title bars, window edges (a line or a beveled frame) and the color picker
+(full or compact), where labels go (beside or above sliders and combos), and the glow, gradient, shade, bevel, knob
+shadow, hard shadow, window stripe and animation effects. They load and save with the rest of a text theme
+(`LoadTheme` / `SaveTheme`), which can also start from a built-in one with `theme = Nord` and `look = Neon`.
 
 ```cpp
 drizzy::UiStyle& style = ui.Style();
@@ -100,7 +104,38 @@ add prims only where they're drawn: a glow is one soft-shadow prim.
 
 **Color pickers** work like Dear ImGui's: a color button opens the picker in a popup, with a saturation/value square,
 hue and alpha bars, "Current" and "Original" swatches (click Original to undo), and RGBA and hex boxes. Hovering the
-button shows the color's values. `ColorEdit4` with `ColorEditFlags::NoInputs` is just the button and its label.
+button shows the color's values, and right-clicking it copies or pastes a color. `ColorEdit4` with
+`ColorEditFlags::NoInputs` is just the button and its label. The compact picker (`ColorPickerShape::Compact`, part of
+the DrizMenu style) is just the square with the hue bar beside it and the alpha bar under it, opened from a slim swatch
+that sits at the end of a checkbox row.
+
+### A classic game menu: DrizMenu
+
+![The DrizMenu demo: icon tabs down the left, settings in titled group boxes over a carbon-fiber background](docs/images/drizmenu.png)
+
+The DrizMenu style and theme together give the classic game-menu look: a beveled frame with a cyan-magenta-yellow
+stripe, a column of icon tabs (`BeginTabBar` with `TabBarFlags::Vertical`), settings in titled group boxes
+(`BeginGroupBox`), small shaded checkboxes with color swatches at the end of their rows, thin slider bars and the compact
+color picker.
+
+It moves like the menus it's modeled on (timings measured frame by frame from footage of one). Switching tabs slides
+the old tab's contents up and out while the new tab's rise into place, both fading, over `UiStyle::animationTime`
+(0.15 s); tab icons brighten under the mouse over a moment; dropdowns and pickers fade in. `Ui::Animate` fades the whole
+menu in and out with its toggle key, a straight 80 ms fade:
+
+```cpp
+const float fade = ui.Animate("menu", menuOpen ? 1.0f : 0.0f, 0.08f);
+if (fade > 0.0f) { ui.PushStyleVar(UiStyleVar::Alpha, fade); BuildMenu(ui); ui.PopStyleVar(); }
+```
+
+During a tab switch `BeginTabItem` returns true for both tabs for a moment (the old one without input), so draw a tab's
+contents whenever it returns true, and use `IsTabItemSelected()` for anything that must follow only the selected tab.
+
+The demo (`samples/common/demo_drizmenu`, sandbox scene `drizmenu`, or View > DrizMenu demo in the sample menu) draws
+its tab icons with drizzy's own shapes and tiles a small texture for the carbon-fiber background. It scales with the
+screen (2x at 4K, 1.33x at 1440p) through `UiStyle::ScaleAllSizes` and a matching font size, so it stays crisp, and its
+Misc tab has a Menu scale slider. It uses Verdana from the Windows fonts folder when it is there; Verdana's license
+doesn't allow shipping it, so it isn't embedded.
 
 ### Customize it from the menu
 
@@ -117,8 +152,9 @@ in two clicks.
 **Fonts.** Besides Inter, the samples bundle six fonts, all under the SIL Open Font License: Monocraft (a
 Minecraft-style pixel font, a fan project not affiliated with Mojang), Press Start 2P (8-bit), JetBrains Mono, Orbitron
 (sci-fi), Rajdhani (HUD) and Varela Round. They're embedded in the sample binaries; the library itself still embeds only
-Inter. All fonts share one atlas texture, so switching fonts adds no draw calls, and any TrueType or OpenType file works
-with `FontAtlas::AddFontFromFile`.
+Inter. The samples also offer Verdana, read from the Windows fonts folder at run time (it can't be redistributed). All
+fonts share one atlas texture, so switching fonts adds no draw calls, and any TrueType or OpenType file works with
+`FontAtlas::AddFontFromFile`.
 
 **Animated backgrounds.** Constellation, matrix rain, starfield, synthwave, waves, bokeh, snow and gradient, with speed,
 density, opacity and color controls. They follow the theme's colors unless you pick your own. They're sample code
@@ -272,13 +308,14 @@ Use `--preset debug` for a Debug build. Everything lands in `build/Release` (or 
 build/Release/drizzy_sandbox.exe [--api d3d11|d3d12]
 build/Release/drizzy_sandbox.exe --scene gallery --theme cyberpunk --look neon --background synthwave
 build/Release/drizzy_sandbox.exe --scene styles --size 1920x1080 --screenshot styles.png
+build/Release/drizzy_sandbox.exe --scene drizmenu
 build/Release/drizzy_sandbox.exe --bench [--size 3840x2160]
 build/Release/drizzy_overlay_dll_test.exe [--api d3d11|d3d12] [--screenshot out.png]
 ```
 
-In the sandbox window, keys `1` to `9` switch scenes (shapes, text, two stress tests, game UI, widget gallery, 3D debug
-drawing, every style, every theme), and `F1` opens the keybinds window, where every shortcut can be rebound. Run
-`drizzy_sandbox --help` for every option.
+In the sandbox window, keys `1` to `9` and `0` switch scenes (shapes, text, two stress tests, game UI, widget gallery, 3D
+debug drawing, every style, every theme, the DrizMenu demo), and `F1` opens the keybinds window, where every shortcut can
+be rebound. Run `drizzy_sandbox --help` for every option.
 
 ## Using drizzy in your project
 

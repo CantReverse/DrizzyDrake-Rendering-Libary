@@ -63,7 +63,9 @@ bool CondAllowed(uint32_t& allowed, Cond cond) {
     return true;
 }
 
-void UpdateAlpha(UiState& g) { g.alpha = g.style.alpha * (g.disabled > 0 ? g.style.disabledAlpha : 1.0f); }
+void UpdateAlpha(UiState& g) {
+    g.alpha = g.style.alpha * (g.disabled > 0 ? g.style.disabledAlpha : 1.0f) * (g.current ? g.current->fade : 1.0f);
+}
 
 UiState::Window* CreateWindowImpl(UiState& g, std::string_view name, ID id, uint32_t flags) {
     auto window = std::make_unique<Window>();
@@ -89,8 +91,8 @@ UiState::Window* CreateWindowImpl(UiState& g, std::string_view name, ID id, uint
 Vec2 CalcAutoFitSize(const UiState& g, const Window* w, float maxHeight) {
     Vec2 size = w->contentSize + w->padding * 2.0f;
     size.x += w->borderSize * 2.0f;
-    size.y += std::max(w->titleBarHeight, w->borderSize) + w->borderSize + w->menuBarHeight;
-    if (w->titleBarHeight > 0.0f) {
+    size.y += TopChromeHeight(w) + w->borderSize + w->menuBarHeight;
+    if (w->titleBarHeight > 0.0f && !w->groupBox) {
         // Room for the title and its buttons.
         const float buttons = (w->flags & WindowFlags::NoCollapse ? 0.0f : g.fontSize + g.style.itemInnerSpacing.x) +
                               g.fontSize + g.style.itemInnerSpacing.x;
@@ -175,6 +177,63 @@ void ClosePopupsOverWindow(UiState& g, Window* ref) {
     if (keep < g.openPopups.size()) {
         g.popupClosedByClick = g.openPopups[keep].popupId;
         ClosePopupToLevel(g, keep);
+    }
+}
+
+// ChromeShape::Bevel around a top-level window: a frame borderSize wide in TitleBg between a dark outline (Border) and
+// two light bevel lines, the body (when `body` is not 0) inside it, and UiStyle::windowStripe along the top inside the
+// frame: StripeStart -> StripeMid -> StripeEnd, its last row darker.
+void RenderBevelFrame(UiState& g, const Window* w, Color body, float rounding) {
+    DrawList& dl = *w->dl;
+    const Rect& o = w->outerRect;
+    const float b = w->borderSize;
+    if (body) dl.AddRectFilled(o.Expanded(-b), body, std::max(rounding - b, 0.0f));
+    if (b > 0.0f) {
+        const Color chrome = StyleColor(g, UiColor::TitleBg);
+        const Color light = LerpColor(chrome, StyleColor(g, UiColor::Text), 0.11f);
+        dl.AddRect(o, chrome, rounding, b);
+        dl.AddRect(o, StyleColor(g, UiColor::Border), rounding, 1.0f);
+        if (b >= 3.0f) {
+            dl.AddRect(o.Expanded(-1.0f), light, std::max(rounding - 1.0f, 0.0f), 1.0f);
+            dl.AddRect(o.Expanded(1.0f - b), light, std::max(rounding - b + 1.0f, 0.0f), 1.0f);
+        }
+    }
+    const float h = std::floor(g.style.windowStripe);
+    if (h <= 0.0f) return;
+    const Rect s(o.min.x + b + 1.0f, o.min.y + b + 1.0f, o.max.x - b - 1.0f, o.min.y + b + 1.0f + h);
+    if (s.Width() <= 2.0f) return;
+    const float mid = std::floor(s.Center().x);
+    const Color c[3] = {StyleColor(g, UiColor::StripeStart), StyleColor(g, UiColor::StripeMid),
+                        StyleColor(g, UiColor::StripeEnd)};
+    auto row = [&](float y0, float y1, float dim) {
+        Color d[3];
+        for (int i = 0; i < 3; ++i) d[i] = LerpColor(c[i], WithAlpha(colors::Black, ColorAlpha(c[i])), dim);
+        dl.AddRectGradient(Rect(s.min.x, y0, mid, y1), d[0], d[1], Gradient::Horizontal);
+        dl.AddRectGradient(Rect(mid, y0, s.max.x, y1), d[1], d[2], Gradient::Horizontal);
+    };
+    if (h > 1.0f) {
+        row(s.min.y, s.max.y - 1.0f, 0.0f);
+        row(s.max.y - 1.0f, s.max.y, 0.45f);
+    } else {
+        row(s.min.y, s.max.y, 0.0f);
+    }
+}
+
+// A square outline of `lines` one-pixel lines from the outside in (Border, then Separator), the top ones broken over
+// [gapMin, gapMax) for a group box's title.
+void RenderOutlineLines(UiState& g, DrawList& dl, const Rect& r, int lines, float gapMin, float gapMax) {
+    for (int i = 0; i < lines; ++i) {
+        const Color c = StyleColor(g, i == 0 ? UiColor::Border : UiColor::Separator);
+        const Rect e = r.Expanded(-float(i));
+        if (gapMax <= gapMin) {
+            dl.AddRect(e, c, 0.0f, 1.0f);
+            continue;
+        }
+        if (gapMin > e.min.x) dl.AddRectFilled(Rect(e.min.x, e.min.y, gapMin, e.min.y + 1.0f), c);
+        if (gapMax < e.max.x) dl.AddRectFilled(Rect(gapMax, e.min.y, e.max.x, e.min.y + 1.0f), c);
+        dl.AddRectFilled(Rect(e.min.x, e.min.y + 1.0f, e.min.x + 1.0f, e.max.y), c);
+        dl.AddRectFilled(Rect(e.max.x - 1.0f, e.min.y + 1.0f, e.max.x, e.max.y), c);
+        dl.AddRectFilled(Rect(e.min.x + 1.0f, e.max.y - 1.0f, e.max.x - 1.0f, e.max.y), c);
     }
 }
 
@@ -474,6 +533,42 @@ Vec2 CalcItemSize(const UiState& g, Vec2 size, float defaultW, float defaultH) {
     return {std::floor(x), std::floor(y)};
 }
 
+LabeledFrame LayoutLabeledFrame(const UiState& g, Vec2 frameSize, float labelWidth) {
+    const Vec2 pos = g.current->cursorPos;
+    LabeledFrame item;
+    if (g.style.labelPlacement == LabelPlacement::Above && labelWidth > 0.0f) {
+        item.frame = Rect::FromPosSize({pos.x, pos.y + TextLineHeight(g) + g.style.itemInnerSpacing.y}, frameSize);
+        item.total = Rect(pos, {pos.x + std::max(frameSize.x, labelWidth), item.frame.max.y});
+        item.textBaseOffset = 0.0f;
+    } else {
+        item.frame = Rect::FromPosSize(pos, frameSize);
+        item.total = Rect(pos, {item.frame.max.x + (labelWidth > 0.0f ? g.style.itemInnerSpacing.x + labelWidth : 0.0f),
+                                item.frame.max.y});
+        item.textBaseOffset = g.style.framePadding.y;
+    }
+    return item;
+}
+
+void RenderFrameLabel(UiState& g, const LabeledFrame& item, std::string_view label) {
+    if (label.empty()) return;
+    const bool above = item.frame.min.y > item.total.min.y;
+    const Vec2 pos = above ? item.total.min
+                           : Vec2(item.frame.max.x + g.style.itemInnerSpacing.x, item.frame.min.y + g.style.framePadding.y);
+    RenderText(g, pos, label, StyleColor(g, UiColor::Text));
+}
+
+float TopChromeHeight(const Window* w) {
+    return w->chromeTop > 0.0f ? w->chromeTop + w->titleBarHeight : std::max(w->titleBarHeight, w->borderSize);
+}
+
+float AnimateTo(UiState& g, ID key, float target, float duration) {
+    float value = g.animations.GetFloat(key, 0.0f);
+    const float step = duration > 0.0f ? g.input.deltaTime / duration : 1e9f;
+    value = value < target ? std::min(value + step, target) : std::max(value - step, target);
+    g.animations.SetFloat(key, value);
+    return value;
+}
+
 bool IsKeyPressedImpl(const UiState& g, Key key, bool repeat) {
     const float t = g.keysDownDuration[size_t(key)];
     if (t == 0.0f) return true;
@@ -490,9 +585,19 @@ Color StyleColor(const UiState& g, UiColor color, float alphaScale) {
 }
 
 // Fill (or, with UiStyle::gradient, a vertical light-to-dark shading of it) for a RectStyle.
+Color ShadeDown(const UiState& g, Color fill) {
+    return LerpColor(fill, WithAlpha(colors::Black, ColorAlpha(fill)), Clamp(g.style.shade, 0.0f, 1.0f));
+}
+
 static void SetShadedFill(const UiState& g, RectStyle& style, Color fill) {
     style.fill = fill;
-    if (g.style.gradient <= 0.0f) return;
+    if (g.style.gradient <= 0.0f) {
+        if (g.style.shade > 0.0f) {
+            style.fillEnd = ShadeDown(g, fill);
+            style.gradient = Gradient::Vertical;
+        }
+        return;
+    }
     const float k = Clamp(g.style.gradient, 0.0f, 1.0f) * 0.4f;
     const uint32_t a = ColorAlpha(fill);
     style.fill = LerpColor(fill, WithAlpha(colors::White, a), k);
@@ -512,7 +617,7 @@ static void RenderBevel(UiState& g, const Rect& r, float rounding, float inset) 
 void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float rounding) {
     DrawList& dl = *g.current->dl;
     const bool withBorder = border && g.style.frameBorderSize > 0.0f;
-    if (withBorder || g.style.gradient > 0.0f) {
+    if (withBorder || g.style.gradient > 0.0f || g.style.shade > 0.0f) {
         RectStyle style;
         SetShadedFill(g, style, fill);
         style.radii = rounding;
@@ -525,6 +630,16 @@ void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float round
         dl.AddRectFilled(r, fill, rounding);
     }
     RenderBevel(g, r, rounding, withBorder ? g.style.frameBorderSize : 0.0f);
+}
+
+void RenderBox(UiState& g, const Rect& r, Color fill, bool outline) {
+    RectStyle style;
+    SetShadedFill(g, style, fill);
+    if (outline) {
+        style.borderWidth = 1.0f;
+        style.borderColor = StyleColor(g, UiColor::Border);
+    }
+    g.current->dl->AddRectEx(r, style);
 }
 
 void RenderGlow(UiState& g, const Rect& r, float rounding, float strength) {
@@ -1036,6 +1151,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
 
     if (w->lastFrameActive == g.frameCount) {
         // Begin() again on a window already submitted this frame: append to it.
+        UpdateAlpha(g);
         w->dl->PushClipRect(w->clipRect, false);
         g.nextWindow.Clear();
         return !w->skipItems;
@@ -1047,6 +1163,18 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     const bool isTooltip = (flags & kWindowTooltip) != 0;
     w->flags = flags;
     w->appearing = !w->wasActive;
+    // UiStyle::animationTime: popups and tooltips fade in (easing out) over half of it from when they appear, so they
+    // still feel immediate; child regions share their parent's fade. Applied to everything the window draws (g.alpha).
+    if (w->appearing) w->appearTime = g.time;
+    if (parent) {
+        w->fade = parent->fade;
+    } else if ((isPopup || isTooltip) && g.style.animationTime > 0.0f) {
+        const float t = Clamp(float((g.time - w->appearTime) / double(g.style.animationTime * 0.5f)), 0.0f, 1.0f);
+        w->fade = t * (2.0f - t);
+    } else {
+        w->fade = 1.0f;
+    }
+    UpdateAlpha(g);
     w->active = true;
     w->lastFrameActive = g.frameCount;
     w->beginOrder = g.beginOrderCounter++;
@@ -1107,12 +1235,21 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     if (isPopup || isTooltip || isChild) w->collapsed = false;
 
     // ---- Size
+    // ChromeShape::Bevel: top-level windows get the raised frame (windowBorderSize wide) and the stripe; everything
+    // else that has a border gets two lines (Border outside, Separator inside).
+    const bool bevel = style.chromeShape == ChromeShape::Bevel;
+    const bool frameChrome = bevel && !isChild && !isPopup && !isTooltip && !(flags & WindowFlags::NoBackground);
+    w->groupBox = isChild && next.groupBox;
     w->padding = isChild ? (w->childBorder ? style.windowPadding : Vec2()) : style.windowPadding;
     w->titleBarHeight = (flags & WindowFlags::NoTitleBar) ? 0.0f : FrameHeight(g);
+    if (w->groupBox) w->titleBarHeight = next.groupTitle.empty() ? 0.0f : TextLineHeight(g);  // the title on the border
     w->menuBarHeight = (flags & WindowFlags::MenuBar) ? FrameHeight(g) : 0.0f;
     w->borderSize = (flags & WindowFlags::NoBackground) ? 0.0f
-                  : isChild                             ? (w->childBorder ? 1.0f : 0.0f)
+                  : isChild                             ? (w->childBorder ? (bevel ? 2.0f : 1.0f) : 0.0f)
+                  : bevel && !frameChrome               ? 2.0f
                                                         : style.windowBorderSize;
+    w->chromeTop = frameChrome ? w->borderSize + (style.windowStripe > 0.0f ? std::floor(style.windowStripe) + 2.0f : 0.0f)
+                               : 0.0f;
     const bool autoResize = (flags & WindowFlags::AlwaysAutoResize) != 0;
     if (created && !sizeFromNext && !isChild) {
         w->autoFitFrames = 2;  // first frame lays out invisibly to measure, second applies the measured size
@@ -1129,7 +1266,8 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
 
     // ---- Position
     const Vec2 pivot = next.pivot;
-    auto applySize = [&] { w->size = w->collapsed ? Vec2(w->sizeFull.x, w->titleBarHeight) : w->sizeFull; };
+    const float collapsedHeight = w->chromeTop > 0.0f ? TopChromeHeight(w) + w->borderSize : w->titleBarHeight;
+    auto applySize = [&] { w->size = w->collapsed ? Vec2(w->sizeFull.x, collapsedHeight) : w->sizeFull; };
     applySize();
     if (posFromNext && (pivot.x != 0.0f || pivot.y != 0.0f)) {
         // The size of an auto-fitting window settles over the next frames; keep re-centering until it has.
@@ -1223,7 +1361,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
 
     // ---- Scrolling
     const float borderSize = w->borderSize;
-    const float viewHeight = w->size.y - std::max(w->titleBarHeight, borderSize) - borderSize - w->menuBarHeight;
+    const float viewHeight = w->size.y - TopChromeHeight(w) - borderSize - w->menuBarHeight;
     const float contentHeight = w->contentSize.y + w->padding.y * 2.0f;
     w->scrollbarY = !w->collapsed && !(flags & WindowFlags::NoScrollbar) && contentHeight > viewHeight + 0.5f;
     w->scrollMax.y = std::max(0.0f, contentHeight - viewHeight);
@@ -1233,11 +1371,11 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     }
     w->scroll.y = std::floor(Clamp(w->scroll.y, 0.0f, w->scrollMax.y));
     const float scrollbarW = w->scrollbarY ? style.scrollbarSize : 0.0f;
-    const float topChrome = std::max(w->titleBarHeight, borderSize) + w->menuBarHeight;
+    const float topChrome = TopChromeHeight(w) + w->menuBarHeight;
     w->innerRect = Rect(w->pos.x + borderSize, w->pos.y + topChrome,
                         w->pos.x + w->size.x - borderSize - scrollbarW, w->pos.y + w->size.y - borderSize);
     if (w->menuBarHeight > 0.0f && !w->collapsed) {
-        const float top = w->pos.y + std::max(w->titleBarHeight, borderSize);
+        const float top = w->pos.y + TopChromeHeight(w);
         w->menuBarRect = Rect(w->pos.x + borderSize, top, w->pos.x + w->size.x - borderSize, top + w->menuBarHeight);
     } else {
         w->menuBarRect = Rect();
@@ -1246,7 +1384,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
 
     // ---- Title bar
     const bool focused = g.focusedWindow == w->root;
-    const Rect title(w->pos, w->pos + Vec2(w->size.x, w->titleBarHeight));
+    const Rect title(w->pos + Vec2(0.0f, w->chromeTop), w->pos + Vec2(w->size.x, w->chromeTop + w->titleBarHeight));
     const float rounding = (isPopup || isTooltip) ? style.popupRounding : (isChild ? style.frameRounding : style.windowRounding);
     Rect closeRect, collapseRect;
     bool closeHovered = false, closeHeld = false, collapseHovered = false;
@@ -1328,11 +1466,35 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         // menu bars inside the border; a collapsed one is just its title bar with the border over it.
         const bool border = background && borderSize > 0.0f;
         const bool bodyWithBorder = background && !w->collapsed;
-        if (bodyWithBorder) {
+        const UiColor bodyColor = (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
+                                : isChild                            ? UiColor::ChildBg
+                                                                     : UiColor::WindowBg;
+        if (w->chromeTop > 0.0f) {
+            RenderBevelFrame(g, w, bodyWithBorder ? StyleColor(g, bodyColor) : 0, rounding);
+        } else if (w->groupBox || (bevel && border)) {
+            // Lines instead of one bordered prim: a group box's title breaks its top border, which runs through the
+            // middle of the title line.
+            const float drop = w->groupBox ? std::floor(w->titleBarHeight * 0.5f) : 0.0f;
+            const Rect body(w->outerRect.min.x, w->outerRect.min.y + drop, w->outerRect.max.x, w->outerRect.max.y);
+            if (bodyWithBorder) {
+                RectStyle rs;
+                shadeFill(rs, StyleColor(g, bodyColor));
+                if (rs.gradient == Gradient::None) dl.AddRectFilled(body, rs.fill);
+                else dl.AddRectEx(body, rs);
+            }
+            float gapMin = 0.0f, gapMax = 0.0f;
+            if (w->groupBox && w->titleBarHeight > 0.0f) {
+                const float textX = body.min.x + std::max(w->padding.x, 8.0f);
+                const float textW = TextSize(g, next.groupTitle).x;
+                gapMin = textX - 4.0f;
+                gapMax = textX + textW + 4.0f;
+                RenderTextClipped(g, {textX, w->outerRect.min.y}, next.groupTitle, StyleColor(g, UiColor::Text),
+                                  w->outerRect);
+            }
+            if (border) RenderOutlineLines(g, dl, body, int(borderSize), gapMin, gapMax);
+        } else if (bodyWithBorder) {
             RectStyle body;
-            shadeFill(body, StyleColor(g, (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
-                                          : isChild                            ? UiColor::ChildBg
-                                                                               : UiColor::WindowBg));
+            shadeFill(body, StyleColor(g, bodyColor));
             body.radii = rounding;
             if (border) {
                 body.borderWidth = borderSize;
@@ -1340,11 +1502,13 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
             }
             dl.AddRectEx(w->outerRect, body);
         }
-        const float inset = bodyWithBorder && border ? borderSize : 0.0f;
+        const float inset = (bodyWithBorder || w->chromeTop > 0.0f) && border ? borderSize : 0.0f;
         const float innerRounding = std::max(rounding - inset, 0.0f);
-        if (w->titleBarHeight > 0.0f) {
+        if (w->titleBarHeight > 0.0f && !w->groupBox) {
             const float bottom = w->collapsed ? rounding : 0.0f;
-            const Rect bar(title.min.x + inset, title.min.y + inset, title.max.x - inset, title.max.y);
+            // (A Bevel frame's title bar already starts below the frame.)
+            const Rect bar(title.min.x + inset, title.min.y + (w->chromeTop > 0.0f ? 0.0f : inset), title.max.x - inset,
+                           title.max.y);
             const CornerRadii barRadii(innerRounding, innerRounding, bottom, bottom);
             const TitleShape shape = style.titleShape;
             const bool solid = shape == TitleShape::Solid && focused;
@@ -1399,7 +1563,9 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
             const float top = w->titleBarHeight > 0.0f ? 0.0f : innerRounding;
             dl.AddRectFilled(w->menuBarRect, StyleColor(g, UiColor::MenuBarBg), CornerRadii(top, top, 0.0f, 0.0f));
         }
-        if (border && !bodyWithBorder) dl.AddRect(w->outerRect, StyleColor(g, UiColor::Border), rounding, borderSize);
+        if (border && !bodyWithBorder && w->chromeTop <= 0.0f) {
+            dl.AddRect(w->outerRect, StyleColor(g, UiColor::Border), rounding, borderSize);
+        }
         if (w->scrollbarY) {
             dl.AddRectFilled(track, StyleColor(g, UiColor::ScrollbarBg));
             dl.AddRectFilled(grab, grabColor, style.scrollbarRounding);
@@ -1461,7 +1627,16 @@ void Ui::End() {
                       std::floor(std::max(0.0f, w->cursorMaxPos.y - w->cursorStartPos.y))};
     g.windowStack.pop_back();
     g.current = g.windowStack.empty() ? nullptr : g.windowStack.back();
+    UpdateAlpha(g);  // back to the parent's fade
 }
+
+float Ui::Animate(std::string_view id, float target, float duration) {
+    return AnimateTo(*m, HashStr(id, 0), target, duration);
+}
+
+bool Ui::IsTabItemSelected() const { return m->lastTabSelected; }
+
+float Ui::GetAlpha() const { return m->alpha; }
 
 bool Ui::BeginChild(std::string_view strId, Vec2 size, bool border, uint32_t flags) {
     UiState& g = *m;
@@ -1500,6 +1675,15 @@ void Ui::EndChild() {
     ItemSize(g, size);
     ItemAdd(g, bb, id);
 }
+
+bool Ui::BeginGroupBox(std::string_view label, Vec2 size, uint32_t flags) {
+    // A bordered child whose title takes the title bar's place, set into the top border by Begin.
+    m->nextWindow.groupBox = true;
+    m->nextWindow.groupTitle = VisibleText(label);
+    return BeginChild(label, size, true, flags);
+}
+
+void Ui::EndGroupBox() { EndChild(); }
 
 void Ui::SetNextWindowPos(Vec2 pos, Cond cond, Vec2 pivot) {
     m->nextWindow.hasPos = true;

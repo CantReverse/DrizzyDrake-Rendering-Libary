@@ -4,10 +4,12 @@
 //
 //   drizzy_sandbox [--api d3d11|d3d12]          interactive window; every key is rebindable in the keybinds window (F1)
 //       1 shapes  2 text  3 shape stress  4 text stress  5 UI  6 gallery  7 3D debug  8 styles  9 themes
+//       0 DrizMenu
 //       Mouse 4/5: previous/next scene   Up/Down: stress count   V: vsync   Ctrl+L: log frame stats   F1: keybinds
 //       Esc: quit
 //   drizzy_sandbox --screenshot out.png         render offscreen and save
-//       --scene shapes|text|stress|textstress|ui|gallery|debug3d|styles|themes  --size WxH  --time T  --count N
+//       --scene shapes|text|stress|textstress|ui|gallery|debug3d|styles|themes|drizmenu  --size WxH  --time T
+//       --count N
 //       --mouse X,Y  --click X,Y  --theme NAME  --look NAME  --font N  --background NAME  --warp
 //   drizzy_sandbox --bench                      headless CPU / GPU cost for shapes, text and UI
 //       --count N  --frames N  --warp  --size WxH  --gpu-repeat N  --video-memory | --system-memory  --copy-prims
@@ -40,16 +42,17 @@ using namespace sandbox;
 
 namespace {
 
-enum class Scene { Shapes, Text, Stress, TextStress, Ui, Gallery, Debug3D, Styles, Themes };
+enum class Scene { Shapes, Text, Stress, TextStress, Ui, Gallery, Debug3D, Styles, Themes, DrizMenu };
 constexpr const char* kSceneNames[] = {"shapes", "text", "stress", "textstress", "ui", "gallery", "debug3d", "styles",
-                                       "themes"};
+                                       "themes", "drizmenu"};
 constexpr const char* kSceneLabels[] = {"Shapes",  "Text",           "Shape stress",     "Text stress",
                                         "Game UI", "Widget gallery", "3D debug drawing", "Every style",
-                                        "Every theme"};
-constexpr int kSceneCount = 9;
+                                        "Every theme",  "DrizMenu"};
+constexpr int kSceneCount = 10;
 
 bool IsUiScene(Scene scene) {
-    return scene == Scene::Ui || scene == Scene::Gallery || scene == Scene::Styles || scene == Scene::Themes;
+    return scene == Scene::Ui || scene == Scene::Gallery || scene == Scene::Styles || scene == Scene::Themes ||
+           scene == Scene::DrizMenu;
 }
 bool IsStressScene(Scene scene) { return scene == Scene::Stress || scene == Scene::TextStress; }
 
@@ -78,7 +81,8 @@ void PrintUsage() {
         "  --screenshot <file.png>   render offscreen and save the image\n"
         "  --bench                   headless benchmark of shapes, text and UI\n"
         "  --api d3d11|d3d12         graphics API (default d3d11)\n"
-        "  --scene <name>            shapes | text | stress | textstress | ui\n"
+        "  --scene <name>            shapes | text | stress | textstress | ui | gallery | debug3d | styles | themes |\n"
+        "                            drizmenu\n"
         "  --size WxH                render size (default 1280x720)\n"
         "  --count N                 stress item count\n"
         "  --frames N                frames to measure (bench) or run before quitting (window)\n"
@@ -272,6 +276,9 @@ struct App {
         const std::vector<uint32_t> checker = MakeCheckerPixels(64);
         assets.font = font;
         assets.checker = host.CreateTexture(64, 64, checker.data());
+        const std::vector<uint32_t> carbon = demo::CarbonPixels(256);
+        assets.carbon = host.CreateTexture(256, 256, carbon.data());
+        demo::Gallery().carbon = assets.carbon;
         ui.Style().font = font;
         ui.Platform().getClipboardText = GetClipboard;
         ui.Platform().setClipboardText = SetClipboard;
@@ -282,10 +289,11 @@ struct App {
             dl.SetPrimAllocator(host.Allocator());
         }
         stats.api = host.ApiName();
-        return atlas.Texture() != kNoTexture && assets.checker != kNoTexture;
+        return atlas.Texture() != kNoTexture && assets.checker != kNoTexture && assets.carbon != kNoTexture;
     }
     void Release(GpuHost& host) {
         host.DestroyTexture(assets.checker);
+        host.DestroyTexture(assets.carbon);
         host.DestroyTexture(atlas.Texture());
     }
 
@@ -303,6 +311,8 @@ struct App {
                 demo::ShowWidgetGallery(ui, assets.checker);
             } else if (scene == Scene::Styles || scene == Scene::Themes) {
                 demo::ShowStyleShowcase(ui, scene == Scene::Themes);
+            } else if (scene == Scene::DrizMenu) {
+                demo::ShowDrizMenu(ui, assets.carbon);
             } else {
                 demo.Build(ui, time, stats, assets.checker);
             }
@@ -371,7 +381,8 @@ int RunScreenshot(const Options& o) {
     ApplyGalleryOptions(o, app->ui);
     SetupKeybinds(*app);  // default bindings only, so a --click on the main menu's Keybinds button can show them
     // UI windows size themselves to their content over the first frames: let them settle, replay the clicks (a press
-    // frame, a release frame, and a frame for any popup to measure itself), then settle again.
+    // frame, a release frame, and a frame for any popup to measure itself), then settle again, long enough for fades
+    // (UiStyle::animationTime) to finish.
     UiInput& in = app->ui.Input();
     auto frame = [&] { host->RenderFrame(app->Build(o.scene, size, o.time, 1.0f / 60.0f), false); };
     const int settle = IsUiScene(o.scene) ? 3 : 1;
@@ -385,7 +396,7 @@ int RunScreenshot(const Options& o) {
         frame();
     }
     in.mousePos = o.mouse;
-    for (int i = 0; i < settle; ++i) frame();
+    for (int i = 0; i < (IsUiScene(o.scene) ? settle + 12 : settle); ++i) frame();
     const RenderStats stats = host->Stats();
     const bool saved = host->SavePng(o.output.c_str());
     app->Release(*host);
@@ -753,7 +764,7 @@ void SetupKeybinds(App& app) {
 
     binds.Group("Scenes");
     for (int s = 0; s < kSceneCount; ++s) {
-        binds.Add(std::string("scene.") + kSceneNames[s], kSceneLabels[s], {uint8_t('1' + s)},
+        binds.Add(std::string("scene.") + kSceneNames[s], kSceneLabels[s], {uint8_t(s < 9 ? '1' + s : '0')},
                   [s] { g_window.scene = Scene(s); });
     }
     binds.Add("scene.previous", "Previous scene", {VK_XBUTTON1},

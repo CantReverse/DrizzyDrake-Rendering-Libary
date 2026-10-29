@@ -74,17 +74,51 @@ void DrawChecker(DrawList& dl, const Rect& r, const CornerRadii& radii) {
 // checkerboard on the right.
 void DrawSwatch(UiState& g, const Rect& bb, Color color, float rounding, bool showAlpha) {
     DrawList& dl = *g.current->dl;
+    // Swatches shade down like the look's other fills (UiStyle::shade).
+    auto fill = [&](const Rect& r, Color c, const CornerRadii& radii) {
+        if (g.style.shade <= 0.0f) {
+            dl.AddRectFilled(r, c, radii);
+            return;
+        }
+        RectStyle style;
+        style.fill = c;
+        style.fillEnd = ShadeDown(g, c);
+        style.gradient = Gradient::Vertical;
+        style.radii = radii;
+        dl.AddRectEx(r, style);
+    };
     const Color opaque = WithAlpha(color, uint32_t(255.0f * g.alpha + 0.5f));
     if (!showAlpha || ColorAlpha(color) == 255) {
-        dl.AddRectFilled(bb, opaque, rounding);
+        fill(bb, opaque, rounding);
         return;
     }
     const float mid = std::floor(bb.Center().x);
-    dl.AddRectFilled(Rect(bb.min.x, bb.min.y, mid, bb.max.y), opaque, CornerRadii(rounding, 0.0f, 0.0f, rounding));
+    fill(Rect(bb.min.x, bb.min.y, mid, bb.max.y), opaque, CornerRadii(rounding, 0.0f, 0.0f, rounding));
     const Rect right(mid, bb.min.y, bb.max.x, bb.max.y);
     const CornerRadii radii(0.0f, rounding, rounding, 0.0f);
     DrawChecker(dl, right, radii);
-    dl.AddRectFilled(right, ScaleAlpha(color, g.alpha), radii);
+    fill(right, ScaleAlpha(color, g.alpha), radii);
+}
+
+// A swatch button of `size`. With `slimHeight` > 0 the swatch drawn is that tall, centered in the item (the slim
+// swatches of ColorPickerShape::Compact, which sit on a line of text).
+bool SwatchButton(UiState& g, ID id, Color color, Vec2 size, uint32_t flags, float slimHeight) {
+    Window* w = g.current;
+    const Rect bb = Rect::FromPosSize(w->cursorPos, size);
+    ItemSize(g, size, slimHeight > 0.0f ? 0.0f : g.style.framePadding.y);
+    if (!ItemAdd(g, bb, id)) return false;
+    bool hovered, held;
+    const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held);
+    Rect r = bb;
+    if (slimHeight > 0.0f && slimHeight < bb.Height()) {
+        const float y = std::floor(bb.min.y + (bb.Height() - slimHeight) * 0.5f);
+        r = Rect(bb.min.x, y, bb.max.x, y + slimHeight);
+    }
+    const float rounding = std::min(g.style.frameRounding, r.Height() * 0.5f);
+    if (hovered) RenderGlow(g, r, rounding, 0.6f);
+    DrawSwatch(g, r, color, rounding, !(flags & ColorEditFlags::NoAlpha));
+    w->dl->AddRect(r, hovered ? StyleColor(g, UiColor::Text, 0.8f) : StyleColor(g, UiColor::Border), rounding, 1.0f);
+    return pressed;
 }
 
 } // namespace
@@ -93,19 +127,8 @@ bool Ui::ColorButton(std::string_view strId, Color color, Vec2 sizeArg, uint32_t
     UiState& g = *m;
     Window* w = g.current;
     if (w->skipItems) return false;
-    const ID id = HashStr(strId, w->idStack.back());
     const float h = FrameHeight(g);
-    const Vec2 size = CalcItemSize(g, sizeArg, h, h);
-    const Rect bb = Rect::FromPosSize(w->cursorPos, size);
-    ItemSize(g, size, g.style.framePadding.y);
-    if (!ItemAdd(g, bb, id)) return false;
-    bool hovered, held;
-    const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held);
-    const float rounding = std::min(g.style.frameRounding, size.y * 0.5f);
-    if (hovered) RenderGlow(g, bb, rounding, 0.6f);
-    DrawSwatch(g, bb, color, rounding, !(flags & ColorEditFlags::NoAlpha));
-    w->dl->AddRect(bb, hovered ? StyleColor(g, UiColor::Text, 0.8f) : StyleColor(g, UiColor::Border), rounding, 1.0f);
-    return pressed;
+    return SwatchButton(g, HashStr(strId, w->idStack.back()), color, CalcItemSize(g, sizeArg, h, h), flags, 0.0f);
 }
 
 bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, const Color* original) {
@@ -130,18 +153,22 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, cons
         }
     }
 
-    // ---- Geometry
-    const float barW = std::floor(style.frameRounding + g.fontSize * 0.9f);
-    const float spacing = style.itemInnerSpacing.x;
+    // ---- Geometry. Full: square, hue bar and alpha bar side by side. Compact: the hue bar beside the square and the
+    // alpha bar under it, thin, with nothing else.
+    const bool compact = style.colorPickerShape == ColorPickerShape::Compact;
+    const float barW = compact ? std::floor(g.fontSize * 0.8f) : std::floor(style.frameRounding + g.fontSize * 0.9f);
+    const float spacing = compact ? 4.0f : style.itemInnerSpacing.x;
     const float width = ui_detail::CalcItemWidth(g);
-    const float svSize = std::max(32.0f, width - (barW + spacing) * (hasAlpha ? 2.0f : 1.0f));
+    const float svSize = std::max(32.0f, width - (barW + spacing) * (hasAlpha && !compact ? 2.0f : 1.0f));
     const Vec2 origin = w->cursorPos;
     const Rect sv(origin, origin + Vec2(svSize, svSize));
     const Rect hue(sv.max.x + spacing, origin.y, sv.max.x + spacing + barW, origin.y + svSize);
-    const Rect alphaBar(hue.max.x + spacing, origin.y, hue.max.x + spacing + barW, origin.y + svSize);
-    Rect block(origin, {hasAlpha ? alphaBar.max.x : hue.max.x, origin.y + svSize});
+    const Rect alphaBar = compact ? Rect(origin.x, sv.max.y + spacing, sv.max.x, sv.max.y + spacing + barW)
+                                  : Rect(hue.max.x + spacing, origin.y, hue.max.x + spacing + barW, origin.y + svSize);
+    Rect block = compact ? Rect(origin, {hue.max.x, hasAlpha ? alphaBar.max.y : sv.max.y})
+                         : Rect(origin, {hasAlpha ? alphaBar.max.x : hue.max.x, origin.y + svSize});
     // "Current" and "Original" swatches in a column beside the bars.
-    const bool sidePreview = !(flags & ColorEditFlags::NoSidePreview);
+    const bool sidePreview = !compact && !(flags & ColorEditFlags::NoSidePreview);
     Rect side;
     if (sidePreview) {
         const float sideW = std::floor(std::max(g.fontSize * 3.4f, TextSize(g, DZ_STR("Original")).x));
@@ -179,12 +206,14 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, cons
         }
         (void)hueChanged;
         if (hasAlpha) {
-            float ay = 1.0f - float(alpha) / 255.0f;
+            // Full: opaque at the top. Compact: a horizontal bar, opaque at the right.
+            float ax = float(alpha) / 255.0f, ay = 1.0f - ax;
             const bool before = changed;
             changed = false;
-            drag(HashStr(DZ_STR("#alpha"), id), alphaBar, dummy, ay);
+            if (compact) drag(HashStr(DZ_STR("#alpha"), id), alphaBar, ax, dummy);
+            else drag(HashStr(DZ_STR("#alpha"), id), alphaBar, dummy, ay);
             if (changed) {
-                const uint32_t a = uint32_t(Clamp(1.0f - ay, 0.0f, 1.0f) * 255.0f + 0.5f);
+                const uint32_t a = uint32_t(Clamp(compact ? ax : 1.0f - ay, 0.0f, 1.0f) * 255.0f + 0.5f);
                 *color = WithAlpha(*color, a);
             }
             changed = changed || before;
@@ -229,10 +258,16 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, cons
         DrawList& dl = *w->dl;
         const Color hueFull = ColorFromHsv(H, 1.0f, 1.0f, 255);
         dl.AddRectFilledMultiColor(sv, colors::White, hueFull, colors::Black, colors::Black);
-        // SV cursor.
+        // SV cursor: a ring, or (compact) a small square.
         const Vec2 svCur(sv.min.x + S * svSize, sv.min.y + (1.0f - V) * svSize);
-        dl.AddCircle(svCur, 5.0f, colors::Black, 1.5f);
-        dl.AddCircle(svCur, 4.0f, colors::White, 1.5f);
+        if (compact) {
+            const Vec2 c(std::floor(svCur.x), std::floor(svCur.y));
+            dl.AddRect(Rect(c - Vec2(2.0f, 2.0f), c + Vec2(3.0f, 3.0f)), colors::Black, 0.0f, 1.0f);
+            dl.AddRect(Rect(c - Vec2(1.0f, 1.0f), c + Vec2(2.0f, 2.0f)), colors::White, 0.0f, 1.0f);
+        } else {
+            dl.AddCircle(svCur, 5.0f, colors::Black, 1.5f);
+            dl.AddCircle(svCur, 4.0f, colors::White, 1.5f);
+        }
         // Hue bar: six gradient segments.
         static const Color kHue[7] = {Hex(0xFF0000), Hex(0xFFFF00), Hex(0x00FF00), Hex(0x00FFFF),
                                       Hex(0x0000FF), Hex(0xFF00FF), Hex(0xFF0000)};
@@ -248,10 +283,25 @@ bool Ui::ColorPicker4(std::string_view label, Color* color, uint32_t flags, cons
         if (hasAlpha) {
             DrawChecker(dl, alphaBar, 0.0f);
             const Color opaque = WithAlpha(*color, 255);
-            dl.AddRectGradient(alphaBar, opaque, WithAlpha(opaque, 0), Gradient::Vertical);
-            const float ay = alphaBar.min.y + (1.0f - float(ColorAlpha(*color)) / 255.0f) * alphaBar.Height();
-            dl.AddRectFilled(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::White);
-            dl.AddRect(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::Black, 0.0f, 1.0f);
+            if (compact) {
+                dl.AddRectGradient(alphaBar, WithAlpha(opaque, 0), opaque, Gradient::Horizontal);
+                const float ax = std::floor(alphaBar.min.x + float(ColorAlpha(*color)) / 255.0f * alphaBar.Width());
+                const Rect marker(ax - 2.0f, alphaBar.min.y - 1.0f, ax + 2.0f, alphaBar.max.y + 1.0f);
+                dl.AddRectFilled(marker, colors::White);
+                dl.AddRect(marker, colors::Black, 0.0f, 1.0f);
+            } else {
+                dl.AddRectGradient(alphaBar, opaque, WithAlpha(opaque, 0), Gradient::Vertical);
+                const float ay = alphaBar.min.y + (1.0f - float(ColorAlpha(*color)) / 255.0f) * alphaBar.Height();
+                dl.AddRectFilled(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::White);
+                dl.AddRect(Rect(alphaBar.min.x - 1.0f, ay - 2.0f, alphaBar.max.x + 1.0f, ay + 2.0f), colors::Black, 0.0f, 1.0f);
+            }
+        }
+        if (compact) {
+            // Dark outlines around the square and the bars, like the look's other boxes.
+            const Color outline = StyleColor(g, UiColor::Border);
+            dl.AddRect(sv.Expanded(1.0f), outline, 0.0f, 1.0f);
+            dl.AddRect(hue.Expanded(1.0f), outline, 0.0f, 1.0f);
+            if (hasAlpha) dl.AddRect(alphaBar.Expanded(1.0f), outline, 0.0f, 1.0f);
         }
         if (sidePreview && swatchH > 4.0f) {
             const float sr = std::min(style.frameRounding, swatchH * 0.5f);
@@ -350,18 +400,36 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
         }
     }
 
-    // The swatch: a button that opens the picker in a popup.
+    // The swatch: a button that opens the picker in a popup (Compact: a slim one, as tall as a line of text), with
+    // Copy / Paste on right-click.
+    const bool compact = g.style.colorPickerShape == ColorPickerShape::Compact;
     Rect swatch;
     if (!(flags & ColorEditFlags::NoSwatch)) {
         if (showInputs) SameLine(0.0f, g.style.itemInnerSpacing.x);
         const float h = FrameHeight(g);
-        const bool clicked = ColorButton(DZ_STR("##swatch"), *color, {showInputs ? h : std::floor(h * 1.6f), h}, flags);
+        const ID swatchId = HashStr(DZ_STR("##swatch"), w->idStack.back());
+        const bool clicked = compact && !showInputs
+                                 ? SwatchButton(g, swatchId, *color, {std::floor(g.fontSize * 1.4f), TextLineHeight(g)}, flags,
+                                                std::floor(g.fontSize * 0.75f))
+                                 : SwatchButton(g, swatchId, *color, {showInputs ? h : std::floor(h * 1.6f), h}, flags, 0.0f);
         swatch = w->lastItemRect;
         if (clicked && !(flags & ColorEditFlags::NoPicker)) {
             g.colorPickerOriginal = *color;
             OpenPopup(DZ_STR("##picker"));
         }
-        if (!(flags & ColorEditFlags::NoTooltip) && IsItemHovered() && !IsPopupOpen(DZ_STR("##picker"))) {
+        if (BeginPopupContextItem(DZ_STR("##swatchmenu"))) {
+            if (MenuItem(DZ_STR("Copy"))) {
+                g.colorClipboard = *color;
+                g.hasColorClipboard = true;
+            }
+            if (MenuItem(DZ_STR("Paste"), {}, false, g.hasColorClipboard)) {
+                *color = hasAlpha ? g.colorClipboard : WithAlpha(g.colorClipboard, 255);
+                changed = true;
+            }
+            EndPopup();
+        }
+        if (!(flags & ColorEditFlags::NoTooltip) && IsItemHovered() && !IsPopupOpen(DZ_STR("##picker")) &&
+            !IsPopupOpen(DZ_STR("##swatchmenu"))) {
             BeginTooltip();
             if (!text.empty()) Text(text);
             ColorButton(DZ_STR("##tip"), *color, {g.fontSize * 3.0f, g.fontSize * 3.0f}, flags & ColorEditFlags::NoAlpha);
@@ -374,7 +442,7 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
     }
     if (!(flags & ColorEditFlags::NoLabel) && !text.empty()) {
         SameLine(0.0f, g.style.itemInnerSpacing.x);
-        AlignTextToFramePadding();
+        if (!compact || showInputs) AlignTextToFramePadding();  // a slim swatch already sits on the text line
         Text(text);
     }
     if (swatch.Width() > 0.0f && IsPopupOpen(DZ_STR("##picker"))) {
@@ -386,16 +454,19 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
         g.nextWindow.hasAnchor = true;
         g.nextWindow.anchor = swatch;
     }
-    if (BeginPopup(DZ_STR("##picker"))) {
-        if (!text.empty()) {
+    // Compact: just the picker, in a tightly padded popup.
+    if (compact) PushStyleVar(UiStyleVar::WindowPadding, {5.0f, 5.0f});
+    const bool pickerOpen = BeginPopup(DZ_STR("##picker"));
+    if (compact) PopStyleVar();
+    if (pickerOpen) {
+        if (!text.empty() && !compact) {
             TextDisabled(text);
             Separator();
         }
-        SetNextItemWidth(std::floor(g.fontSize * 11.0f));
-        if (ColorPicker4(DZ_STR("##pick"), color, (flags & ColorEditFlags::NoAlpha) | ColorEditFlags::NoLabel,
-                         &g.colorPickerOriginal)) {
-            changed = true;
-        }
+        SetNextItemWidth(std::floor(g.fontSize * (compact ? 12.0f : 11.0f)));
+        const uint32_t pickFlags = (flags & ColorEditFlags::NoAlpha) | ColorEditFlags::NoLabel |
+                                   (compact ? ColorEditFlags::NoInputs | ColorEditFlags::NoSidePreview : 0u);
+        if (ColorPicker4(DZ_STR("##pick"), color, pickFlags, &g.colorPickerOriginal)) changed = true;
         EndPopup();
     }
     PopID();

@@ -136,11 +136,10 @@ bool InputTextImpl(UiState& g, std::string_view label, std::string_view hint, ch
     const auto [id, labelText] = ParseLabel(label, w->idStack.back());
     const Vec2 pad = g.style.framePadding;
     const float lineH = TextLineHeight(g);
-    const Rect frame = Rect::FromPosSize(w->cursorPos, {CalcItemWidth(g), lineH + pad.y * 2.0f});
-    const float labelW = TextSize(g, labelText).x;
-    const Rect total(frame.min, {frame.max.x + (labelW > 0.0f ? g.style.itemInnerSpacing.x + labelW : 0.0f), frame.max.y});
-    ItemSize(g, total.Size(), pad.y);
-    if (!ItemAdd(g, total, id)) return false;
+    const LabeledFrame item = LayoutLabeledFrame(g, {CalcItemWidth(g), lineH + pad.y * 2.0f}, TextSize(g, labelText).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return false;
 
     const bool hovered = ItemHoverable(g, frame, id);
     if (hovered) g.cursorRequest = MouseCursor::TextInput;
@@ -343,9 +342,7 @@ bool InputTextImpl(UiState& g, std::string_view label, std::string_view hint, ch
             RenderText(g, {frame.min.x + pad.x, textY}, shown, color);
         }
     }
-    if (!labelText.empty()) {
-        RenderText(g, {frame.max.x + g.style.itemInnerSpacing.x, textY}, labelText, StyleColor(g, UiColor::Text));
-    }
+    RenderFrameLabel(g, item, labelText);
     return (flags & InputTextFlags::EnterReturnsTrue) ? enterPressed : edited;
 }
 
@@ -424,11 +421,10 @@ bool InputTextMultilineImpl(UiState& g, std::string_view label, char* buffer, si
     const Vec2 pad = g.style.framePadding;
     const float lineH = TextLineHeight(g);
     const Vec2 size = CalcItemSize(g, sizeArg, ui_detail::CalcItemWidth(g), lineH * 6.0f + pad.y * 2.0f);
-    const Rect frame = Rect::FromPosSize(w->cursorPos, size);
-    const float labelW = TextSize(g, labelText).x;
-    const Rect total(frame.min, {frame.max.x + (labelW > 0.0f ? g.style.itemInnerSpacing.x + labelW : 0.0f), frame.max.y});
-    ItemSize(g, total.Size(), pad.y);
-    if (!ItemAdd(g, total, id)) return false;
+    const LabeledFrame item = LayoutLabeledFrame(g, size, TextSize(g, labelText).x);
+    const Rect frame = item.frame;
+    ItemSize(g, item.total.Size(), item.textBaseOffset);
+    if (!ItemAdd(g, item.total, id)) return false;
 
     const bool hovered = ItemHoverable(g, frame, id);
     if (hovered) g.cursorRequest = MouseCursor::TextInput;
@@ -628,10 +624,7 @@ bool InputTextMultilineImpl(UiState& g, std::string_view label, char* buffer, si
         g.output.textInputPos = inner.min;
     }
     dl.PopClipRect();
-    if (!labelText.empty()) {
-        RenderText(g, {frame.max.x + g.style.itemInnerSpacing.x, frame.min.y + pad.y}, labelText,
-                   StyleColor(g, UiColor::Text));
-    }
+    RenderFrameLabel(g, item, labelText);
     return edited;
 }
 
