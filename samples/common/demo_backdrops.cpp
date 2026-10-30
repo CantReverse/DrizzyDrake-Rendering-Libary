@@ -63,7 +63,7 @@ void ParticleBackground::Draw(DrawList& dl, Vec2 mouse) const {
             const float d2 = LengthSq(b.pos - a.pos);
             if (d2 >= linkSq) continue;
             const float t = (1.0f - std::sqrt(d2) / linkDistance) * std::min(fadeIn(a), fadeIn(b));
-            dl.AddLine(origin + a.pos, origin + b.pos, ScaleAlpha(lineColor, t * 0.4f), 1.0f);
+            dl.AddLine(origin + a.pos, origin + b.pos, ScaleAlpha(lineColor, t * 0.4f), lineWidth);
         }
     }
     // Point-to-cursor links: brighter, so the field visibly reaches for the mouse as it moves.
@@ -74,11 +74,11 @@ void ParticleBackground::Draw(DrawList& dl, Vec2 mouse) const {
             const float d2 = LengthSq(p - mouse);
             if (d2 >= cursorSq) continue;
             const float t = std::min((1.0f - std::sqrt(d2) / cursorDistance) * 1.6f, 1.0f) * fadeIn(node);
-            dl.AddLine(p, mouse, ScaleAlpha(cursorColor, t), 1.25f);
+            dl.AddLine(p, mouse, ScaleAlpha(cursorColor, t), lineWidth * 1.25f);
         }
     }
     // Points on top of the lines.
-    for (const Node& node : m_nodes) dl.AddCircleFilled(origin + node.pos, 1.6f, ScaleAlpha(pointColor, fadeIn(node)));
+    for (const Node& node : m_nodes) dl.AddCircleFilled(origin + node.pos, pointRadius, ScaleAlpha(pointColor, fadeIn(node)));
 }
 
 // =====================================================================================================================
@@ -172,8 +172,12 @@ void Backdrop::Draw(DrawList& dl, const Rect& area, float deltaTime, const Font*
 
     switch (kind) {
     case BackdropKind::Constellation: {
-        m_constellation.density = 1.5f * density;
-        m_constellation.speed = 26.0f;
+        m_constellation.density = 1.5f * density / (scale * scale);
+        m_constellation.speed = 26.0f * scale;
+        m_constellation.linkDistance = 130.0f * scale;
+        m_constellation.cursorDistance = 170.0f * scale;
+        m_constellation.pointRadius = 1.6f * scale;
+        m_constellation.lineWidth = scale;
         m_constellation.lineColor = m_constellation.pointColor = primary;
         m_constellation.cursorColor = accent;
         m_constellation.Update(deltaTime, area);
@@ -217,16 +221,16 @@ void Backdrop::Draw(DrawList& dl, const Rect& area, float deltaTime, const Font*
     }
     case BackdropKind::Starfield: {
         const Vec2 center = area.Center();
-        const float scale = std::max(size.x, size.y) * 0.5f;
+        const float reach = std::max(size.x, size.y) * 0.5f;
         for (Particle& p : m_particles) {
             p.z -= deltaTime * 0.3f;
-            Vec2 pos = center + p.pos * (scale * 0.25f / p.z);
+            Vec2 pos = center + p.pos * (reach * 0.25f / p.z);
             if (p.z <= 0.02f || !area.Expanded(4.0f).Contains(pos)) {
                 p.pos = {Random01() * 2.0f - 1.0f, Random01() * 2.0f - 1.0f};
                 p.z = 1.0f;
                 continue;
             }
-            const Vec2 tail = center + p.pos * (scale * 0.25f / std::min(p.z + 0.035f, 1.0f));
+            const Vec2 tail = center + p.pos * (reach * 0.25f / std::min(p.z + 0.035f, 1.0f));
             const float near = 1.0f - p.z;
             const Color color = ScaleAlpha(p.phase > 0.85f ? accent : primary, Clamp(near * 0.9f, 0.0f, 0.75f));
             dl.AddLine(tail, pos, color, 0.5f + near * 1.1f, LineCap::Round);

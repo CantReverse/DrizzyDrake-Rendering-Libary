@@ -35,6 +35,7 @@ public:
     void SetInt(ID key, int value);
     float GetFloat(ID key, float defaultValue = 0.0f) const;
     void SetFloat(ID key, float value);
+    int* Find(ID key);  // the value under `key` (an int, or a float's bits), or null; valid until the next Set
 
 private:
     struct Pair {
@@ -131,10 +132,23 @@ struct Window {
     uint32_t lastItemStatus = 0;
 
     Storage storage;
-    // UiStyle::animationTime: popups and tooltips fade in from when they appeared; child regions share their parent's.
+    // UiStyle::popupTime: popups and tooltips fade in from when they appeared; child regions share their parent's.
     // Multiplies everything the window draws (UpdateAlpha).
     float fade = 1.0f;
     double appearTime = 0.0;
+    // UiStyle::dropdownTime: how far a popup opened from a widget (a combo's list, a color picker) has unrolled, 0..1. It
+    // rolls back up after it closes: it is then a closing popup (UiState::closingPopups), shown without input.
+    float unroll = 1.0f;
+    bool anchored = false;  // opened from a widget (SetNext... with an anchor): it unrolls, and rolls up when it closes
+    // The dropdownTime it was last drawn with. Popups often close at NewFrame (a click outside, Escape), when the style
+    // may be another one than the popup's (a menu that sets its own style while it is built and restores it after).
+    float unrollTime = 0.0f;
+    bool closing = false;
+    float savedDisabledAlpha = 0.0f;  // a closing popup draws its disabled contents at full opacity (EndPopup restores)
+    // A ComboShape::Flush combo's list: its Selectables are rows as tall as the combo's field, their text at listTextX
+    // (lined up with the field's).
+    bool flushList = false;
+    float listTextX = 0.0f;
 };
 
 // Persisted window layout (SaveIniSettings / LoadIniSettings).
@@ -151,6 +165,14 @@ struct PopupData {
     int openFrame = 0;
     Vec2 openMousePos;
     bool modal = false;
+};
+
+// A popup opened from a widget that has closed and is rolling back up (UiStyle::dropdownTime). The widget keeps
+// submitting it (BeginClosingPopup) until it is rolled up, without input; one that is not submitted is dropped.
+struct ClosingPopup {
+    ID popupId = 0;
+    Window* window = nullptr;
+    int lastFrame = 0;
 };
 
 struct TabBarState {
@@ -170,7 +192,7 @@ struct TabBarState {
     float nextY = 0.0f;
     float savedIndent = 0.0f;
     Rect selectedCell;
-    // UiStyle::animationTime: switching tabs slides the old tab's contents up and out while the new tab's slide up into
+    // UiStyle::tabSwitchTime: switching tabs slides the old tab's contents up and out while the new tab's slide up into
     // place, both fading. For that moment BeginTabItem returns true for both (prevSelected's without input), and each
     // starts at contentPos. contentBottom is the content area's bottom; contentEndY how low the contents submitted this
     // frame reached. The rest is what BeginTabItem set up for EndTabItem to undo.
@@ -181,6 +203,9 @@ struct TabBarState {
     bool fadePushed = false, clipPushed = false, outgoingOpen = false;
     Rect savedClip;
     float savedDisabledAlpha = 0.0f;
+    // TabShape::Underline and Pill with animation: where the selected tab's underline or pill is drawn, sliding toward
+    // the selected tab (indicatorX1 <= indicatorX0: not placed yet).
+    float indicatorX0 = 0.0f, indicatorX1 = 0.0f;
 };
 
 struct TableColumn {
@@ -253,6 +278,9 @@ struct NextWindowData {
     bool collapsed = false;
     bool hasAnchor = false;  // popups placed next to a widget flip above it when there is no room below
     Rect anchor;
+    bool closing = false;    // a popup rolling back up after it closed (BeginClosingPopup)
+    bool flushList = false;  // a ComboShape::Flush combo's list: one Border line around a FrameBg body (BeginCombo)
+    float reveal = -1.0f;    // SetNextWindowReveal (negative: not set)
     float maxHeight = 0.0f;
     bool childBorder = false;
     bool groupBox = false;
@@ -355,6 +383,7 @@ struct UiState {
     // Popups
     std::vector<ui_detail::PopupData> openPopups;       // stack of open popups / modals
     std::vector<ui_detail::PopupData> beginPopupStack;  // popups whose content is being submitted
+    std::vector<ui_detail::ClosingPopup> closingPopups;  // closed popups rolling back up, drawn under the open ones
 
     std::unordered_map<ID, ui_detail::TabBarState> tabBars;
     std::vector<ui_detail::TabBarState*> tabBarStack;
@@ -411,6 +440,10 @@ bool IsPopupOpenId(const UiState& g, ID id);
 void OpenPopupEx(UiState& g, ID id);
 bool BeginPopupEx(Ui& ui, UiState& g, ID id, uint32_t flags);
 void ClosePopupToLevel(UiState& g, size_t level);
+// A closing popup by ID, or null. BeginClosingPopup begins it (like BeginPopupEx, with its contents disabled at full
+// opacity) and returns false, forgetting it, once it has rolled up; EndPopup ends it.
+ClosingPopup* FindClosingPopup(UiState& g, ID id);
+bool BeginClosingPopup(Ui& ui, UiState& g, ID id, uint32_t flags);
 // The parts of a window's own chrome that take input. Their IDs mix the window's ID with the part, so these per-frame IDs
 // need no label string (and nothing to decrypt).
 enum class ChromePart : uint32_t { Move = 1, Resize, Close, Collapse, ScrollY };
@@ -447,12 +480,41 @@ void RenderFrameLabel(UiState& g, const LabeledFrame& item, std::string_view lab
 float TopChromeHeight(const Window* w);
 // Ui::Animate by ID: the value under `key` (from 0) moved toward `target` by deltaTime / `duration`, and returned.
 float AnimateTo(UiState& g, ID key, float target, float duration);
+// What an item animates (UiStyle's animation times), each kept under the item's ID mixed with one of these.
+enum AnimSalt : uint32_t {
+    kAnimHover = 0x484F5652u,  // under the mouse
+    kAnimHeld = 0x48454C44u,   // held down, or active (a slider being dragged, a text field being edited)
+    kAnimOn = 0x4F4E4F4Eu,     // checked, selected, open
+    kAnimValue = 0x56414C55u,  // a value that moves (a slider's fill)
+};
+// `on` eased in and out over `duration` seconds (one of UiStyle's animation times), linearly, for item `id`. A value
+// seen for the first time starts off, or with `fromTarget` where it is going (a checkbox that is already on does not
+// turn on when it first shows). With a duration of 0 (or no ID) it is just 0 or 1 and nothing is stored, so looks
+// without animation draw exactly as before.
+float ItemAnimSlow(UiState& g, ID id, AnimSalt salt, bool on, float duration, bool fromTarget);
+inline float ItemAnim(UiState& g, ID id, AnimSalt salt, bool on, float duration, bool fromTarget = false) {
+    if (duration <= 0.0f) return on ? 1.0f : 0.0f;  // the common case costs a compare
+    return ItemAnimSlow(g, id, salt, on, duration, fromTarget);
+}
+// A moving value eased out toward `target` over about `duration` seconds (`instant`: jump to it).
+float ItemAnimValueSlow(UiState& g, ID id, AnimSalt salt, float target, float duration, bool instant);
+inline float ItemAnimValue(UiState& g, ID id, AnimSalt salt, float target, float duration, bool instant) {
+    if (duration <= 0.0f) return target;
+    return ItemAnimValueSlow(g, id, salt, target, duration, instant);
+}
+inline float EaseOut(float t) { return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t); }
 bool IsKeyPressedImpl(const UiState& g, Key key, bool repeat);
 bool IsMouseHovering(const UiState& g, const Rect& r);
 
 // ---- Rendering helpers -----------------------------------------------------------------------------------------------
 Color StyleColor(const UiState& g, UiColor color, float alphaScale = 1.0f);
 Color LerpColor(Color a, Color b, float t);  // per channel, alpha included (ui_style.cpp)
+// A color that is `base` at rest, `hovered` under the mouse and `active` while held, by ItemAnim amounts.
+inline Color StateColor(Color base, Color hovered, Color active, float hover, float held) {
+    if (held >= 1.0f) return active;
+    const Color c = hover <= 0.0f ? base : hover >= 1.0f ? hovered : LerpColor(base, hovered, hover);
+    return held <= 0.0f ? c : LerpColor(c, active, held);
+}
 // A widget's box: fill (shaded by UiStyle::gradient or shade, with the bevel line) plus the frame border when `border`
 // is set.
 void RenderFrame(UiState& g, const Rect& r, Color fill, bool border, float rounding);
@@ -464,12 +526,16 @@ Color ShadeDown(const UiState& g, Color fill);
 // The look-aware boxes widgets are drawn in. RenderFieldFrame: text fields, drags, combos and slider frames, in
 // UiStyle::frameShape. RenderButtonFrame: buttons in UiStyle::buttonShape; with a hard shadow a held button sinks into
 // it, and the rect returned is where it was drawn (its label goes there too).
-void RenderFieldFrame(UiState& g, const Rect& r, bool hovered, bool active);
-Rect RenderButtonFrame(UiState& g, const Rect& r, bool hovered, bool held, float rounding);
+// Both take how hovered and how held or active they are (0..1, ItemAnim), or plain flags.
+void RenderFieldFrame(UiState& g, const Rect& r, float hover, float active);
+inline void RenderFieldFrame(UiState& g, const Rect& r, bool hovered, bool active) {
+    RenderFieldFrame(g, r, hovered ? 1.0f : 0.0f, active ? 1.0f : 0.0f);
+}
+Rect RenderButtonFrame(UiState& g, const Rect& r, float hover, float held, float rounding);
 // A glow (UiColor::Glow, UiStyle::glowSize) around a rounded rect, drawn before it. `strength` scales its opacity.
 void RenderGlow(UiState& g, const Rect& r, float rounding, float strength = 1.0f);
 // The empty box of a checkbox (and the ring of a radio button when `round`), in the look's frame shape.
-void RenderCheckBox(UiState& g, const Rect& r, bool hovered, bool held, bool round);
+void RenderCheckBox(UiState& g, const Rect& r, float hover, float held, bool round);
 // A round slider / toggle knob with the look's soft shadow (UiStyle::knobShadow) and a glow of `glow` strength.
 void RenderKnob(UiState& g, Vec2 center, float radius, Color color, float glow);
 // Knobs with a soft shadow are near-white, like a physical knob catching the light; others are `flat`.
@@ -486,6 +552,8 @@ void RenderTextAligned(UiState& g, const Rect& r, std::string_view text, Vec2 al
 // Centered text over a bar filled from the left up to `fillX`: AccentText over the fill, Text past it.
 void RenderTextOverFill(UiState& g, const Rect& r, std::string_view text, float fillX);
 void RenderArrow(UiState& g, Vec2 center, float size, int dir, Color color);  // dir: 0 right, 1 down, 2 left, 3 up
+// RenderArrow pointing right (turn 0) through down (0.25) to left (0.5) and up (0.75), at any turn in between.
+void RenderArrowTurned(UiState& g, Vec2 center, float size, float turn, Color color);
 void RenderCheckMark(UiState& g, Vec2 pos, Color color, float size);
 
 // ---- Tables and notifications (ui_tables.cpp, ui_extras.cpp) ----------------------------------------------------------

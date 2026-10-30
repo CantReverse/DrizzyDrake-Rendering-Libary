@@ -100,9 +100,10 @@ bool Ui::ToggleSwitch(std::string_view label, bool* value) {
     DrawList& dl = *w->dl;
     const Rect track = Rect::FromPosSize({pos.x, pos.y + std::floor((height - trackH) * 0.5f)}, {trackW, trackH});
     const float cy = track.Center().y;
-    const Color off = StyleColor(g, hovered ? UiColor::FrameBgHovered : UiColor::FrameBg);
+    const float hover = ItemAnim(g, id, kAnimHover, hovered, g.style.hoverTime);
+    const Color off = LerpColor(StyleColor(g, UiColor::FrameBg), StyleColor(g, UiColor::FrameBgHovered), hover);
     const Color accent = StyleColor(g, UiColor::CheckMark);
-    const Color dimKnob = StyleColor(g, hovered ? UiColor::Text : UiColor::TextDisabled);
+    const Color dimKnob = LerpColor(StyleColor(g, UiColor::TextDisabled), StyleColor(g, UiColor::Text), hover);
     switch (g.style.toggleShape) {
     case ToggleShape::Thin: {
         // Material: a thin track under a knob that overhangs it, the knob taking the accent color when on.

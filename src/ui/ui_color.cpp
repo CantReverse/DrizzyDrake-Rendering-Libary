@@ -102,22 +102,23 @@ void DrawSwatch(UiState& g, const Rect& bb, Color color, float rounding, bool sh
 
 // A swatch button of `size`. With `slimHeight` > 0 the swatch drawn is that tall, centered in the item (the slim
 // swatches of ColorPickerShape::Compact, which sit on a line of text).
-bool SwatchButton(UiState& g, ID id, Color color, Vec2 size, uint32_t flags, float slimHeight) {
+bool SwatchButton(UiState& g, ID id, Color color, Vec2 size, uint32_t flags, float slimHeight, uint32_t buttonFlags = 0) {
     Window* w = g.current;
     const Rect bb = Rect::FromPosSize(w->cursorPos, size);
     ItemSize(g, size, slimHeight > 0.0f ? 0.0f : g.style.framePadding.y);
     if (!ItemAdd(g, bb, id)) return false;
     bool hovered, held;
-    const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held);
+    const bool pressed = ButtonBehavior(g, bb, id, &hovered, &held, buttonFlags);
     Rect r = bb;
     if (slimHeight > 0.0f && slimHeight < bb.Height()) {
         const float y = std::floor(bb.min.y + (bb.Height() - slimHeight) * 0.5f);
         r = Rect(bb.min.x, y, bb.max.x, y + slimHeight);
     }
     const float rounding = std::min(g.style.frameRounding, r.Height() * 0.5f);
-    if (hovered) RenderGlow(g, r, rounding, 0.6f);
+    const float hover = ItemAnim(g, id, kAnimHover, hovered, g.style.hoverTime);
+    if (hover > 0.0f) RenderGlow(g, r, rounding, 0.6f * hover);
     DrawSwatch(g, r, color, rounding, !(flags & ColorEditFlags::NoAlpha));
-    w->dl->AddRect(r, hovered ? StyleColor(g, UiColor::Text, 0.8f) : StyleColor(g, UiColor::Border), rounding, 1.0f);
+    w->dl->AddRect(r, LerpColor(StyleColor(g, UiColor::Border), StyleColor(g, UiColor::Text, 0.8f), hover), rounding, 1.0f);
     return pressed;
 }
 
@@ -347,6 +348,7 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
     bool changed = false;
     BeginGroup();
     PushID(label);
+    const ID pickerId = HashStr(DZ_STR("##picker"), w->idStack.back());
 
     const bool showInputs = !(flags & ColorEditFlags::NoInputs);
     if (showInputs) {
@@ -408,14 +410,17 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
         if (showInputs) SameLine(0.0f, g.style.itemInnerSpacing.x);
         const float h = FrameHeight(g);
         const ID swatchId = HashStr(DZ_STR("##swatch"), w->idStack.back());
+        // Pressed on mouse down, like a combo box, so that clicking the swatch of an open picker closes it: the click
+        // closes the popup first (popupClosedByClick), and the swatch then leaves it closed instead of reopening it.
         const bool clicked = compact && !showInputs
                                  ? SwatchButton(g, swatchId, *color, {std::floor(g.fontSize * 1.4f), TextLineHeight(g)}, flags,
-                                                std::floor(g.fontSize * 0.75f))
-                                 : SwatchButton(g, swatchId, *color, {showInputs ? h : std::floor(h * 1.6f), h}, flags, 0.0f);
+                                                std::floor(g.fontSize * 0.75f), kButtonPressOnClick)
+                                 : SwatchButton(g, swatchId, *color, {showInputs ? h : std::floor(h * 1.6f), h}, flags, 0.0f,
+                                                kButtonPressOnClick);
         swatch = w->lastItemRect;
-        if (clicked && !(flags & ColorEditFlags::NoPicker)) {
+        if (clicked && !(flags & ColorEditFlags::NoPicker) && g.popupClosedByClick != pickerId) {
             g.colorPickerOriginal = *color;
-            OpenPopup(DZ_STR("##picker"));
+            OpenPopupEx(g, pickerId);
         }
         if (BeginPopupContextItem(DZ_STR("##swatchmenu"))) {
             if (MenuItem(DZ_STR("Copy"))) {
@@ -445,7 +450,9 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
         if (!compact || showInputs) AlignTextToFramePadding();  // a slim swatch already sits on the text line
         Text(text);
     }
-    if (swatch.Width() > 0.0f && IsPopupOpen(DZ_STR("##picker"))) {
+    // Open, or rolling back up after closing (UiStyle::dropdownTime), shown without input.
+    const bool pickerOpen = IsPopupOpenId(g, pickerId), pickerClosing = !pickerOpen && FindClosingPopup(g, pickerId);
+    if (swatch.Width() > 0.0f && (pickerOpen || pickerClosing)) {
         // Open below the swatch (above it when there is no room), like a combo box, rather than at the mouse.
         g.nextWindow.hasPos = true;
         g.nextWindow.pos = {swatch.min.x, swatch.max.y + g.style.itemInnerSpacing.y};
@@ -456,9 +463,10 @@ bool Ui::ColorEdit4(std::string_view label, Color* color, uint32_t flags) {
     }
     // Compact: just the picker, in a tightly padded popup.
     if (compact) PushStyleVar(UiStyleVar::WindowPadding, {5.0f, 5.0f});
-    const bool pickerOpen = BeginPopup(DZ_STR("##picker"));
+    const bool pickerShown = pickerOpen ? BeginPopupEx(*this, g, pickerId, WindowFlags::None)
+                                        : BeginClosingPopup(*this, g, pickerId, WindowFlags::None);
     if (compact) PopStyleVar();
-    if (pickerOpen) {
+    if (pickerShown) {
         if (!text.empty() && !compact) {
             TextDisabled(text);
             Separator();

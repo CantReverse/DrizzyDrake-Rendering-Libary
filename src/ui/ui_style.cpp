@@ -45,7 +45,14 @@ const VarInfo kVarInfo[] = {
     {DZ_OBF("knobShadow"), 1, offsetof(UiStyle, knobShadow)},
     {DZ_OBF("shade"), 1, offsetof(UiStyle, shade)},
     {DZ_OBF("windowStripe"), 1, offsetof(UiStyle, windowStripe)},
-    {DZ_OBF("animationTime"), 1, offsetof(UiStyle, animationTime)},
+    {DZ_OBF("scrollFade"), 1, offsetof(UiStyle, scrollFade)},
+    {DZ_OBF("tabSwitchTime"), 1, offsetof(UiStyle, tabSwitchTime)},
+    {DZ_OBF("hoverTime"), 1, offsetof(UiStyle, hoverTime)},
+    {DZ_OBF("toggleTime"), 1, offsetof(UiStyle, toggleTime)},
+    {DZ_OBF("sliderTime"), 1, offsetof(UiStyle, sliderTime)},
+    {DZ_OBF("dropdownTime"), 1, offsetof(UiStyle, dropdownTime)},
+    {DZ_OBF("popupTime"), 1, offsetof(UiStyle, popupTime)},
+    {DZ_OBF("windowStripeTime"), 1, offsetof(UiStyle, windowStripeTime)},
 };
 static_assert(sizeof(kVarInfo) / sizeof(kVarInfo[0]) == size_t(UiStyleVar::Count), "kVarInfo must match UiStyleVar");
 
@@ -60,7 +67,7 @@ bool IsUnitless(size_t offset) {
     return offset == offsetof(UiStyle, alpha) || offset == offsetof(UiStyle, buttonTextAlign) ||
            offset == offsetof(UiStyle, gradient) || offset == offsetof(UiStyle, bevel) ||
            offset == offsetof(UiStyle, knobShadow) || offset == offsetof(UiStyle, shade) ||
-           offset == offsetof(UiStyle, animationTime);
+           (offset >= offsetof(UiStyle, tabSwitchTime) && offset <= offsetof(UiStyle, windowStripeTime));  // seconds
 }
 
 // The shape settings: one-byte enums, written to theme files by name. Names are encrypted (detail::ObfEntry).
@@ -73,7 +80,7 @@ struct ShapeInfo {
 const detail::ObfEntry kFrameShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline"), DZ_OBF("Underline")};
 const detail::ObfEntry kButtonShapes[] = {DZ_OBF("Filled"), DZ_OBF("Outline")};
 const detail::ObfEntry kSliderShapes[] = {DZ_OBF("Block"), DZ_OBF("Rail"), DZ_OBF("Fill"), DZ_OBF("Segments"),
-                                          DZ_OBF("Bar")};
+                                          DZ_OBF("Bar"), DZ_OBF("BarSteps")};
 const detail::ObfEntry kCheckShapes[] = {DZ_OBF("Check"), DZ_OBF("Fill"), DZ_OBF("Square"), DZ_OBF("Small")};
 const detail::ObfEntry kToggleShapes[] = {DZ_OBF("Pill"), DZ_OBF("Thin"), DZ_OBF("Square")};
 const detail::ObfEntry kTabShapes[] = {DZ_OBF("Tab"), DZ_OBF("Underline"), DZ_OBF("Pill"), DZ_OBF("Box")};
@@ -81,10 +88,11 @@ const detail::ObfEntry kTitleShapes[] = {DZ_OBF("Bar"), DZ_OBF("Accent"), DZ_OBF
 const detail::ObfEntry kChromeShapes[] = {DZ_OBF("Line"), DZ_OBF("Bevel")};
 const detail::ObfEntry kLabelPlacements[] = {DZ_OBF("Right"), DZ_OBF("Above")};
 const detail::ObfEntry kColorPickerShapes[] = {DZ_OBF("Full"), DZ_OBF("Compact")};
+const detail::ObfEntry kComboShapes[] = {DZ_OBF("Box"), DZ_OBF("Flush")};
 const ShapeInfo kShapeInfo[] = {
     {DZ_OBF("frameShape"), offsetof(UiStyle, frameShape), kFrameShapes, 3},
     {DZ_OBF("buttonShape"), offsetof(UiStyle, buttonShape), kButtonShapes, 2},
-    {DZ_OBF("sliderShape"), offsetof(UiStyle, sliderShape), kSliderShapes, 5},
+    {DZ_OBF("sliderShape"), offsetof(UiStyle, sliderShape), kSliderShapes, 6},
     {DZ_OBF("checkShape"), offsetof(UiStyle, checkShape), kCheckShapes, 4},
     {DZ_OBF("toggleShape"), offsetof(UiStyle, toggleShape), kToggleShapes, 3},
     {DZ_OBF("tabShape"), offsetof(UiStyle, tabShape), kTabShapes, 4},
@@ -92,6 +100,7 @@ const ShapeInfo kShapeInfo[] = {
     {DZ_OBF("chromeShape"), offsetof(UiStyle, chromeShape), kChromeShapes, 2},
     {DZ_OBF("labelPlacement"), offsetof(UiStyle, labelPlacement), kLabelPlacements, 2},
     {DZ_OBF("colorPickerShape"), offsetof(UiStyle, colorPickerShape), kColorPickerShapes, 2},
+    {DZ_OBF("comboShape"), offsetof(UiStyle, comboShape), kComboShapes, 2},
 };
 
 const detail::ObfEntry kColorNames[] = {
@@ -452,16 +461,25 @@ void SetLook(UiStyle& s, UiLook look) {
         s.grabRounding = 0.0f;
         s.popupRounding = 0.0f;
         s.tabRounding = 0.0f;
-        s.sliderShape = SliderShape::Bar;
+        s.sliderShape = SliderShape::BarSteps;
         s.checkShape = CheckShape::Small;
         s.toggleShape = ToggleShape::Square;
         s.tabShape = TabShape::Underline;
         s.chromeShape = ChromeShape::Bevel;
         s.labelPlacement = LabelPlacement::Above;
         s.colorPickerShape = ColorPickerShape::Compact;
+        s.comboShape = ComboShape::Flush;
         s.shade = 0.3f;
         s.windowStripe = 2.0f;
-        s.animationTime = 0.15f;
+        s.scrollFade = 18.0f;
+        // Timings measured frame by frame from footage of a classic game menu (the stripe's flow is DrizMenu's own).
+        s.tabSwitchTime = 0.15f;
+        s.hoverTime = 0.06f;
+        s.toggleTime = 0.09f;
+        s.sliderTime = 0.09f;
+        s.dropdownTime = 0.14f;
+        s.popupTime = 0.075f;
+        s.windowStripeTime = 6.0f;
         break;
     default:
         break;
@@ -474,6 +492,8 @@ namespace ui_detail {
 const VarInfo& GetVarInfo(UiStyleVar var) { return kVarInfo[size_t(var)]; }
 
 Color LerpColor(Color a, Color b, float t) {
+    if (t <= 0.0f) return a;
+    if (t >= 1.0f) return b;
     auto channel = [&](int shift) {
         const float x = float((a >> shift) & 0xFFu), y = float((b >> shift) & 0xFFu);
         return uint32_t(x + (y - x) * t + 0.5f) << shift;
@@ -622,6 +642,7 @@ void UiStyle::ApplyLook(UiLook look) {
     UiStyle s;  // the classic sizes, shapes and effects
     SetLook(s, look);
     s.font = font;
+    s.boldFont = boldFont;
     s.fontSize = fontSize;
     s.alpha = alpha;
     s.disabledAlpha = disabledAlpha;

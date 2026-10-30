@@ -27,6 +27,8 @@ public:
     float speed = 26.0f;             // drift speed, pixels/second
     float linkDistance = 130.0f;     // points closer than this are joined
     float cursorDistance = 170.0f;   // points closer than this to the mouse link to it
+    float pointRadius = 1.6f;
+    float lineWidth = 1.0f;          // links between points (links to the mouse are a quarter wider)
     drizzy::Color background = drizzy::colors::Transparent;  // fill under the points (transparent: none)
     drizzy::Color lineColor = drizzy::colors::White;
     drizzy::Color pointColor = drizzy::colors::White;
@@ -76,6 +78,8 @@ public:
     float speed = 1.0f;    // animation speed multiplier
     float density = 1.0f;  // particle count multiplier
     float opacity = 1.0f;  // scales every color's alpha
+    float scale = 1.0f;    // the constellation's sizes, distances and speed, for a UI drawn larger (its density per
+                           // pixel goes down to match, so it looks the same)
 
 private:
     struct Particle {

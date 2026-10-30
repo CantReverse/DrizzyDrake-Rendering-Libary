@@ -47,19 +47,21 @@ std::vector<DemoFont> AddDemoFonts(FontAtlas& atlas, Font* defaultFont) {
         const unsigned char* data;
         size_t size;
         float fontSize;
+        float pixelsPerEm;
     };
+    // Monocraft's pixels are 120 of its 1080 units per em (9 per em); Press Start 2P's 125 of 1000 (8 per em).
     const Entry entries[] = {
-        {"Monocraft (Minecraft style)", kDemoFont_Monocraft, kDemoFont_MonocraftSize, 16.0f},
-        {"Press Start 2P (8-bit)", kDemoFont_PressStart2P_Regular, kDemoFont_PressStart2P_RegularSize, 11.0f},
-        {"JetBrains Mono", kDemoFont_JetBrainsMono_Regular, kDemoFont_JetBrainsMono_RegularSize, 15.0f},
-        {"Orbitron (sci-fi)", kDemoFont_Orbitron_Variable, kDemoFont_Orbitron_VariableSize, 14.0f},
-        {"Rajdhani (HUD)", kDemoFont_Rajdhani_Medium, kDemoFont_Rajdhani_MediumSize, 18.0f},
-        {"Varela Round", kDemoFont_VarelaRound_Regular, kDemoFont_VarelaRound_RegularSize, 16.0f},
+        {"Minecraft (Monocraft)", kDemoFont_Monocraft, kDemoFont_MonocraftSize, 16.0f, 9.0f},
+        {"Press Start 2P (8-bit)", kDemoFont_PressStart2P_Regular, kDemoFont_PressStart2P_RegularSize, 11.0f, 8.0f},
+        {"JetBrains Mono", kDemoFont_JetBrainsMono_Regular, kDemoFont_JetBrainsMono_RegularSize, 15.0f, 0.0f},
+        {"Orbitron (sci-fi)", kDemoFont_Orbitron_Variable, kDemoFont_Orbitron_VariableSize, 14.0f, 0.0f},
+        {"Rajdhani (HUD)", kDemoFont_Rajdhani_Medium, kDemoFont_Rajdhani_MediumSize, 18.0f, 0.0f},
+        {"Varela Round", kDemoFont_VarelaRound_Regular, kDemoFont_VarelaRound_RegularSize, 16.0f, 0.0f},
     };
     std::vector<DemoFont> fonts;
     if (defaultFont) fonts.push_back({"Inter", defaultFont, 16.0f});
     for (const Entry& e : entries) {
-        if (Font* font = atlas.AddFont(e.data, e.size)) fonts.push_back({e.name, font, e.fontSize});
+        if (Font* font = atlas.AddFont(e.data, e.size)) fonts.push_back({e.name, font, e.fontSize, e.pixelsPerEm});
     }
     g_systemFonts.verdana = AddWindowsFont(atlas, "verdana.ttf");
     g_systemFonts.verdanaBold = AddWindowsFont(atlas, "verdanab.ttf");

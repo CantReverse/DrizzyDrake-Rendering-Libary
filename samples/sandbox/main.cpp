@@ -4,7 +4,7 @@
 //
 //   drizzy_sandbox [--api d3d11|d3d12]          interactive window; every key is rebindable in the keybinds window (F1)
 //       1 shapes  2 text  3 shape stress  4 text stress  5 UI  6 gallery  7 3D debug  8 styles  9 themes
-//       0 DrizMenu
+//       0 DrizMenu (Insert opens and closes it)
 //       Mouse 4/5: previous/next scene   Up/Down: stress count   V: vsync   Ctrl+L: log frame stats   F1: keybinds
 //       Esc: quit
 //   drizzy_sandbox --screenshot out.png         render offscreen and save
@@ -258,6 +258,7 @@ struct App {
     DemoStats stats;
     demo::KeyBinds binds;      // set up by SetupKeybinds
     bool showKeybinds = false;  // the keybinds window, shown over any scene
+    bool drizMenuOpen = true;   // the DrizMenu scene's menu, which its menu key (Insert) opens and closes
     DrawList dl;
     const DrawList* singleList[1] = {&dl};
     DrawData singleData;
@@ -312,7 +313,7 @@ struct App {
             } else if (scene == Scene::Styles || scene == Scene::Themes) {
                 demo::ShowStyleShowcase(ui, scene == Scene::Themes);
             } else if (scene == Scene::DrizMenu) {
-                demo::ShowDrizMenu(ui, assets.carbon);
+                demo::ShowDrizMenu(ui, assets.carbon, &drizMenuOpen, true);
             } else {
                 demo.Build(ui, time, stats, assets.checker);
             }
@@ -382,9 +383,15 @@ int RunScreenshot(const Options& o) {
     SetupKeybinds(*app);  // default bindings only, so a --click on the main menu's Keybinds button can show them
     // UI windows size themselves to their content over the first frames: let them settle, replay the clicks (a press
     // frame, a release frame, and a frame for any popup to measure itself), then settle again, long enough for fades
-    // (UiStyle::animationTime) to finish.
+    // (UiStyle's animation times) to finish.
     UiInput& in = app->ui.Input();
-    auto frame = [&] { host->RenderFrame(app->Build(o.scene, size, o.time, 1.0f / 60.0f), false); };
+    // UI scenes: --time starts the UI clock there (the first frame steps it), e.g. to catch the window stripe's flow.
+    bool firstFrame = true;
+    auto frame = [&] {
+        const float deltaTime = firstFrame && IsUiScene(o.scene) && o.time > 0.0f ? o.time : 1.0f / 60.0f;
+        firstFrame = false;
+        host->RenderFrame(app->Build(o.scene, size, o.time, deltaTime), false);
+    };
     const int settle = IsUiScene(o.scene) ? 3 : 1;
     for (int i = 0; i < settle; ++i) frame();
     for (const Vec2& click : o.clicks) {

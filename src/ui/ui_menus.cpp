@@ -117,9 +117,10 @@ bool Ui::BeginMenu(std::string_view label, bool enabled) {
     // Draw the label.
     DrawList& dl = *w->dl;
     const Color textColor = StyleColor(g, enabled ? UiColor::Text : UiColor::TextDisabled);
-    if (hovered || menuOpen) {
-        const UiColor c = menuOpen ? UiColor::HeaderActive : UiColor::HeaderHovered;
-        dl.AddRectFilled(bb, StyleColor(g, c), inBar ? style.frameRounding : 0.0f);
+    const float hover = ItemAnim(g, id, kAnimHover, hovered || menuOpen, g.style.hoverTime);
+    if (hover > 0.0f) {
+        dl.AddRectFilled(bb, menuOpen ? StyleColor(g, UiColor::HeaderActive) : StyleColor(g, UiColor::HeaderHovered, hover),
+                         inBar ? style.frameRounding : 0.0f);
     }
     if (inBar) {
         RenderTextAligned(g, bb, text, {0.5f, 0.5f}, &bb);

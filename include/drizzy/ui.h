@@ -161,8 +161,9 @@ struct TabBarFlags {
     enum : uint32_t {
         None = 0,
         // Tabs stacked in a column down the left of the window (a game-menu sidebar); the selected tab's content goes to
-        // the right of the column. Tabs with no visible label ("##world") leave their cell to an icon you draw over it
-        // (GetItemRectMin/Max right after BeginTabItem).
+        // the right of the column. Tabs with no visible label ("##world") leave their cell to an icon you draw over it:
+        // note the cell (GetItemRectMin/Max right after BeginTabItem) and draw the icon after EndTabBar. While a switch
+        // animates, whatever is drawn between BeginTabItem and EndTabItem fades with the tab's contents.
         Vertical = 1u << 0,
     };
 };
@@ -193,7 +194,8 @@ enum class UiStyleVar : uint8_t {
     Alpha, WindowPadding, WindowRounding, WindowBorderSize, WindowShadowSize, WindowMinSize, FramePadding,
     FrameRounding, FrameBorderSize, ItemSpacing, ItemInnerSpacing, IndentSpacing, ScrollbarSize, ScrollbarRounding,
     GrabMinSize, GrabRounding, PopupRounding, TabRounding, ButtonTextAlign, CellPadding, GlowSize, Gradient, Bevel,
-    HardShadow, KnobShadow, Shade, WindowStripe, AnimationTime,
+    HardShadow, KnobShadow, Shade, WindowStripe, ScrollFade, TabSwitchTime, HoverTime, ToggleTime, SliderTime,
+    DropdownTime, PopupTime, WindowStripeTime,
     Count
 };
 
@@ -245,6 +247,7 @@ enum class SliderShape : uint8_t {
     Fill,      // the frame fills up to the value, which reads over it
     Segments,  // a row of blocks that light up, the value to its right
     Bar,       // a thin bar that fills up to the value, which reads under the end of the fill
+    BarSteps,  // Bar, with a small - and + just outside its ends that step the value down and up
 };
 enum class CheckShape : uint8_t {
     Check,   // a check mark in the box
@@ -284,6 +287,11 @@ enum class ColorPickerShape : uint8_t {
     Full,     // saturation/value square, hue and alpha bars side by side, Current/Original swatches, RGBA and hex boxes
     Compact,  // saturation/value square with the hue bar to its right and the alpha bar under it, nothing else
 };
+enum class ComboShape : uint8_t {
+    Box,    // the arrow in a box of its own, the items in a padded popup (Dear ImGui)
+    Flush,  // a small arrow inside the field, and a list flush with it: rows as tall as the field, their text lined up
+            // with the field's, the selected one in the accent color
+};
 
 // The handful of colors a theme is built from; UiStyle::ApplyPalette derives every UiColor from them.
 struct UiPalette {
@@ -301,6 +309,8 @@ struct UiPalette {
 
 struct UiStyle {
     const Font* font = nullptr;   // required
+    const Font* boldFont = nullptr;  // emphasized text: group box titles, slider bar values and the rows of flush
+                                     // dropdown lists (ComboShape::Flush); null = font. Kept by ApplyLook, like font.
     float fontSize = 16.0f;       // pixels per em
     float alpha = 1.0f;           // global opacity
     Vec2 windowPadding = {10.0f, 10.0f};
@@ -335,6 +345,7 @@ struct UiStyle {
     ChromeShape chromeShape = ChromeShape::Line;
     LabelPlacement labelPlacement = LabelPlacement::Right;
     ColorPickerShape colorPickerShape = ColorPickerShape::Full;
+    ComboShape comboShape = ComboShape::Box;
     float glowSize = 0.0f;     // blur radius of the glow (UiColor::Glow) around checked, active and focused widgets; 0 = off
     float gradient = 0.0f;     // 0..1: vertical shading of buttons, frames, title bars and windows (light top, dark bottom)
     float bevel = 0.0f;        // 0..1: opacity of a light line along the top inside edge of buttons and frames
@@ -344,10 +355,21 @@ struct UiStyle {
                                // the top and darken toward the bottom by this much (used when gradient is 0)
     float windowStripe = 0.0f;  // height of a stripe (StripeStart -> StripeMid -> StripeEnd) along the top inside edge of
                                 // top-level windows with ChromeShape::Bevel; 0 = none
-    float animationTime = 0.0f;  // seconds a tab switch takes: the old tab's contents slide up and fade out while the
-                                 // new tab's slide up into place and fade in. Vertical tab labels brighten under the
-                                 // mouse, and popups, menus, combo lists, pickers and tooltips fade in, over a part of
-                                 // it. 0 = instant. (To fade a whole menu in and out with its toggle key: Ui::Animate.)
+
+    // ---- Animation: how long each kind of change takes, in seconds. 0 = instant: nothing is stored or eased, and
+    // widgets draw exactly as without animation (the default for every look but DrizMenu). To fade a whole menu in and
+    // out with its toggle key: Ui::Animate.
+    float scrollFade = 0.0f;  // child regions and group boxes that scroll fade their contents out over this height at an
+                              // edge with more beyond it, and show a small arrow in that corner; 0 = off
+    float tabSwitchTime = 0.0f;  // switching tabs: the old tab's contents slide up and fade out while the new tab's rise
+                                 // into place and fade in; a tab's underline or pill slides over to it
+    float hoverTime = 0.0f;      // hover and press colors of every widget (presses take half of it)
+    float toggleTime = 0.0f;     // checkboxes and radio buttons turning on and off, tree arrows turning
+    float sliderTime = 0.0f;     // slider fills moving to a clicked or changed value (following a drag in 2/3 of it)
+    float dropdownTime = 0.0f;   // combo lists and color pickers unrolling from their field and rolling back up, and
+                                 // combo arrows turning
+    float popupTime = 0.0f;      // popups, menus and tooltips fading in
+    float windowStripeTime = 0.0f;  // seconds the window stripe's colors take to flow along it and back; 0 = still
 
     Color colors[size_t(UiColor::Count)] = {};
 
@@ -467,6 +489,9 @@ public:
     // A component of 0 sizes that axis to the content.
     void SetNextWindowSize(Vec2 size, Cond cond = Cond::Always);
     void SetNextWindowCollapsed(bool collapsed, Cond cond = Cond::Always);
+    // Draws only the top `fraction` (0..1) of the next window: its frame that tall and its contents clipped to it, for
+    // unrolling a window open or rolling it shut. Its size, layout and input are unchanged.
+    void SetNextWindowReveal(float fraction);
     void SetNextWindowFocus();
     Vec2 GetWindowPos() const;
     Vec2 GetWindowSize() const;
@@ -660,7 +685,7 @@ public:
     // tab's height (0: about six em wide, two frame heights tall).
     bool BeginTabBar(std::string_view id, uint32_t flags = TabBarFlags::None, Vec2 tabSize = {});
     void EndTabBar();
-    // EndTabItem() if it returned true; true for the selected tab. With UiStyle::animationTime, for a moment after a
+    // EndTabItem() if it returned true; true for the selected tab. With UiStyle::tabSwitchTime, for a moment after a
     // switch it also returns true for the tab that was selected before: its contents slide out (faded, without input)
     // while the new tab's slide in. Draw a tab's contents whenever it returns true; use IsTabItemSelected() (right
     // after it) for anything that must only follow the selected tab.

@@ -23,6 +23,7 @@ const char* const kCheckShapes[] = {"Check mark", "Filled box", "Square", "Small
 const char* const kChromeShapes[] = {"Line", "Bevel frame"};
 const char* const kLabelPlacements[] = {"Right", "Above"};
 const char* const kColorPickerShapes[] = {"Full", "Compact"};
+const char* const kComboShapes[] = {"Arrow box", "Flush list"};
 const char* const kToggleShapes[] = {"Pill", "Thin (Material)", "Square"};
 const char* const kTabShapes[] = {"Tabs", "Underline", "Pills", "Boxes"};
 const char* const kTitleShapes[] = {"Bar", "Accent stripe", "Plain", "Solid accent"};
@@ -691,6 +692,14 @@ void CustomizeTab(Ui& ui) {
         EnumCombo(ui, "Window edges", &style.chromeShape, kChromeShapes, 2);
         EnumCombo(ui, "Labels", &style.labelPlacement, kLabelPlacements, 2);
         EnumCombo(ui, "Color picker", &style.colorPickerShape, kColorPickerShapes, 2);
+        EnumCombo(ui, "Dropdowns", &style.comboShape, kComboShapes, 2);
+        ui.SliderFloat("Tab switch", &style.tabSwitchTime, 0.0f, 0.5f, "%.2f s");
+        ui.SliderFloat("Hover", &style.hoverTime, 0.0f, 0.3f, "%.2f s");
+        ui.SliderFloat("Toggles", &style.toggleTime, 0.0f, 0.4f, "%.2f s");
+        ui.SliderFloat("Slider fills", &style.sliderTime, 0.0f, 0.4f, "%.2f s");
+        ui.SliderFloat("Dropdowns##time", &style.dropdownTime, 0.0f, 0.4f, "%.2f s");
+        ui.SliderFloat("Popups", &style.popupTime, 0.0f, 0.4f, "%.2f s");
+        ui.SliderFloat("Stripe flow", &style.windowStripeTime, 0.0f, 20.0f, "%.1f s");
         ui.SliderFloat("Glow", &style.glowSize, 0.0f, 24.0f, "%.0f px");
         ui.SliderFloat("Gradient", &style.gradient, 0.0f, 1.0f, "%.2f");
         ui.SliderFloat("Shade", &style.shade, 0.0f, 1.0f, "%.2f");
@@ -828,13 +837,9 @@ void ApplyGallerySettings(Ui& ui) {
 }
 
 void ShowWidgetGallery(Ui& ui, TextureId image, bool* open) {
-    // The DrizMenu demo: its own window, in its own style, fading in and out as View > DrizMenu demo toggles it.
-    const float drizMenuFade = ui.Animate("##drizmenu_fade", Gallery().showDrizMenu ? 1.0f : 0.0f, 0.08f);
-    if (drizMenuFade > 0.0f) {
-        ui.PushStyleVar(UiStyleVar::Alpha, drizMenuFade);
-        ShowDrizMenu(ui, Gallery().carbon);
-        ui.PopStyleVar();
-    }
+    // The DrizMenu demo: its own window, in its own style, opening and closing (animated) as View > DrizMenu demo
+    // toggles it. The host's own key opens this whole menu, so the DrizMenu does not take one.
+    ShowDrizMenu(ui, Gallery().carbon, &Gallery().showDrizMenu, false);
     // On first use, wide enough for every tab label in the current font (fonts differ a lot in width).
     const UiStyle& style = ui.Style();
     const float tabsWidth = ui.CalcTextSize("BasicsInputColorListsTreesPopupsPlotsTablesExtrasLayoutCustomize").x +
@@ -911,7 +916,7 @@ void ShowStyleShowcase(Ui& ui, bool themes) {
         {UiTheme::Nord, UiLook::Soft, "Varela", BackdropKind::Bokeh},
         {UiTheme::Cyberpunk, UiLook::Neon, "Orbitron", BackdropKind::Synthwave},
         {UiTheme::Light, UiLook::Flat, "Inter", BackdropKind::Waves},
-        {UiTheme::Emerald, UiLook::Retro, "Monocraft", BackdropKind::MatrixRain},
+        {UiTheme::Emerald, UiLook::Retro, "Minecraft", BackdropKind::MatrixRain},
         {UiTheme::Dracula, UiLook::Glass, "Rajdhani", BackdropKind::Gradient},
         {UiTheme::DrizMenu, UiLook::DrizMenu, "Verdana", BackdropKind::None},
     };

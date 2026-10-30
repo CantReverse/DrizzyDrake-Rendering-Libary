@@ -77,7 +77,7 @@ ui.Style().ApplyLook(drizzy::UiLook::Neon);         // shapes, sizes and effects
 | Flat | Underlined text fields, thin Material-style toggles and sliders, square corners and no chrome. |
 | Retro | Square and outlined, segmented sliders and progress bars, a solid title bar and hard offset shadows. |
 | Glass | Translucent gradients with a light top edge, sliders that fill up, and pill tabs. |
-| DrizMenu | A classic game menu: a beveled window frame with a color stripe, small shaded checkboxes, thin slider bars, labels above sliders and combos, a compact color picker, and sliding tab transitions. |
+| DrizMenu | A classic game menu: a beveled window frame with a color stripe, small shaded checkboxes, thin slider bars, labels above sliders and combos, flush dropdown lists, a compact color picker, sliding tab transitions, and every widget easing between states. |
 
 **Themes** (`UiTheme`): Dark, Light, Obsidian, Cyberpunk, Nord, Emerald, Crimson, Dracula, Sakura and DrizMenu
 (charcoal greys, a lime accent and a cyan-magenta-yellow stripe). For a theme of your own, give `UiStyle::ApplyPalette` a
@@ -104,38 +104,72 @@ add prims only where they're drawn: a glow is one soft-shadow prim.
 
 **Color pickers** work like Dear ImGui's: a color button opens the picker in a popup, with a saturation/value square,
 hue and alpha bars, "Current" and "Original" swatches (click Original to undo), and RGBA and hex boxes. Hovering the
-button shows the color's values, and right-clicking it copies or pastes a color. `ColorEdit4` with
+button shows the color's values, right-clicking it copies or pastes a color, and clicking it again closes the picker.
+`ColorEdit4` with
 `ColorEditFlags::NoInputs` is just the button and its label. The compact picker (`ColorPickerShape::Compact`, part of
 the DrizMenu style) is just the square with the hue bar beside it and the alpha bar under it, opened from a slim swatch
 that sits at the end of a checkbox row.
 
 ### A classic game menu: DrizMenu
 
-![The DrizMenu demo: icon tabs down the left, settings in titled group boxes over a carbon-fiber background](docs/images/drizmenu.png)
+![The DrizMenu demo: icon tabs down the left, settings in titled group boxes over a carbon-fiber background with drifting particles](docs/images/drizmenu.png)
 
 The DrizMenu style and theme together give the classic game-menu look: a beveled frame with a cyan-magenta-yellow
 stripe, a column of icon tabs (`BeginTabBar` with `TabBarFlags::Vertical`), settings in titled group boxes
-(`BeginGroupBox`), small shaded checkboxes with color swatches at the end of their rows, thin slider bars and the compact
-color picker.
+(`BeginGroupBox`), small shaded checkboxes with color swatches at the end of their rows, thin slider bars with a small
+- and + at their ends that step the value (`SliderShape::BarSteps`), and the compact color picker. Group box titles,
+slider values and dropdown rows are in a bold font (`UiStyle::boldFont`), and boxes whose contents scroll fade them out
+at the edge with more, with a small arrow in the corner (`UiStyle::scrollFade`).
 
-It moves like the menus it's modeled on (timings measured frame by frame from footage of one). Switching tabs slides
-the old tab's contents up and out while the new tab's rise into place, both fading, over `UiStyle::animationTime`
-(0.15 s); tab icons brighten under the mouse over a moment; dropdowns and pickers fade in. `Ui::Animate` fades the whole
-menu in and out with its toggle key, a straight 80 ms fade:
+Its dropdowns (`ComboShape::Flush`) are flush lists, as in the menu it's modeled on: the list hangs from the field,
+sharing its bottom border, in the field's own color, with rows as tall as the field and their text lined up with the
+field's; the selected row is in the accent color, the row under the mouse darkens and its text brightens, and the
+field's text dims while the list is open.
+
+It moves like the menus it's modeled on (timings measured frame by frame from footage of one), and every kind of
+movement has its own duration in `UiStyle`, in seconds, so each can be tuned or turned off on its own:
+
+| Setting | What eases | DrizMenu |
+|---|---|---|
+| `tabSwitchTime` | the old tab's contents slide up and out while the new tab's rise into place, both fading; tab underlines slide to the selected tab | 0.15 |
+| `hoverTime` | hover and press colors of every widget (presses take half of it) | 0.06 |
+| `toggleTime` | checkboxes and radio buttons turning on and off, tree arrows turning | 0.09 |
+| `sliderTime` | slider fills moving to a clicked or changed value | 0.09 |
+| `dropdownTime` | dropdowns and color pickers unrolling from their field and rolling back up when they close, combo arrows turning | 0.14 |
+| `popupTime` | popups, menus and tooltips fading in | 0.075 |
+| `windowStripeTime` | the window stripe's colors flowing along it and back (a loop) | 6 |
+
+At 0 (the default, and every style but DrizMenu) nothing is stored or eased, and widgets draw exactly as before.
+`Ui::Animate` fades the whole menu in and out with its toggle key. The menu it's modeled on fades over about 85 ms,
+quickly at first and then easing in (the same curve backwards when it closes):
 
 ```cpp
-const float fade = ui.Animate("menu", menuOpen ? 1.0f : 0.0f, 0.08f);
-if (fade > 0.0f) { ui.PushStyleVar(UiStyleVar::Alpha, fade); BuildMenu(ui); ui.PopStyleVar(); }
+const float t = ui.Animate("menu", menuOpen ? 1.0f : 0.0f, 0.085f);  // linear, 0..1
+const float fade = 1.0f - (1.0f - t) * (1.0f - t);                   // eased
+if (t > 0.0f) { ui.PushStyleVar(UiStyleVar::Alpha, fade); BuildMenu(ui); ui.PopStyleVar(); }
 ```
+
+`SetNextWindowReveal(fraction)` draws only the top part of the next window, for unrolling one open instead.
 
 During a tab switch `BeginTabItem` returns true for both tabs for a moment (the old one without input), so draw a tab's
 contents whenever it returns true, and use `IsTabItemSelected()` for anything that must follow only the selected tab.
+Draw icons over the tab cells after `EndTabBar` (note each cell with `GetItemRectMin/Max` right after `BeginTabItem`):
+anything drawn between `BeginTabItem` and `EndTabItem` fades with the tab's contents.
 
 The demo (`samples/common/demo_drizmenu`, sandbox scene `drizmenu`, or View > DrizMenu demo in the sample menu) draws
-its tab icons with drizzy's own shapes and tiles a small texture for the carbon-fiber background. It scales with the
-screen (2x at 4K, 1.33x at 1440p) through `UiStyle::ScaleAllSizes` and a matching font size, so it stays crisp, and its
-Misc tab has a Menu scale slider. It uses Verdana from the Windows fonts folder when it is there; Verdana's license
-doesn't allow shipping it, so it isn't embedded.
+its tab icons with drizzy's own shapes, tiles a small texture for the carbon-fiber weave, and lets particles drift over
+it, linking to the mouse, under the panels. Insert opens and closes it (Misc > Menu key picks another key), with a
+choice of animations: the classic menu's fade, sliding in from any side, unrolling, or instant. An info bar at the top right
+of the screen shows its title, the FPS, the frame time, the resolution and the time, like a classic menu's watermark.
+Options can carry a hotkey, shown as a tag at the end of their row (click it, then press a key), and options that
+stand out are drawn in a highlight color. It scales with the screen (2x at 4K, 1.33x at 1440p) through
+`UiStyle::ScaleAllSizes` and a matching font size, so it stays crisp. Its Customize tab restyles the menu itself: every
+color, the font (including Minecraft-style pixel text, sized to whole multiples of the font's pixel grid so each pixel
+stays a sharp square), font size and menu scale, the shape of checkboxes, sliders, dropdowns, color pickers and labels,
+rounding, shading, frame and stripe, every animation's duration on its own (the table above, plus the menu's own fade
+in and out) or all of them off, the background effect (any of the animated backgrounds below, with its color, opacity,
+speed and density), and how opaque the panels and the tab column are. It uses Verdana from the
+Windows fonts folder when it is there; Verdana's license doesn't allow shipping it, so it isn't embedded.
 
 ### Customize it from the menu
 

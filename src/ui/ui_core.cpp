@@ -182,7 +182,9 @@ void ClosePopupsOverWindow(UiState& g, Window* ref) {
 
 // ChromeShape::Bevel around a top-level window: a frame borderSize wide in TitleBg between a dark outline (Border) and
 // two light bevel lines, the body (when `body` is not 0) inside it, and UiStyle::windowStripe along the top inside the
-// frame: StripeStart -> StripeMid -> StripeEnd, its last row darker.
+// frame: StripeStart -> StripeMid -> StripeEnd, its last row darker. With UiStyle::windowStripeTime the colors flow to
+// the right: the stripe shows a window onto StripeStart -> Mid -> End -> Mid -> Start, twice its width and repeating,
+// that slides along it once per windowStripeTime (at the start of each loop it looks just like the still stripe).
 void RenderBevelFrame(UiState& g, const Window* w, Color body, float rounding) {
     DrawList& dl = *w->dl;
     const Rect& o = w->outerRect;
@@ -205,11 +207,36 @@ void RenderBevelFrame(UiState& g, const Window* w, Color body, float rounding) {
     const float mid = std::floor(s.Center().x);
     const Color c[3] = {StyleColor(g, UiColor::StripeStart), StyleColor(g, UiColor::StripeMid),
                         StyleColor(g, UiColor::StripeEnd)};
+    const float loop = g.style.windowStripeTime;
+    // Where the stripe's left end is in the repeating pattern (whole pixels, so the pieces meet without seams).
+    const float half = std::floor(s.Width() * 0.5f), period = half * 4.0f;  // keys every half width
+    const float start = loop > 0.0f ? period - std::floor(float(std::fmod(g.time, double(loop)) / double(loop)) * period) : 0.0f;
     auto row = [&](float y0, float y1, float dim) {
         Color d[3];
         for (int i = 0; i < 3; ++i) d[i] = LerpColor(c[i], WithAlpha(colors::Black, ColorAlpha(c[i])), dim);
-        dl.AddRectGradient(Rect(s.min.x, y0, mid, y1), d[0], d[1], Gradient::Horizontal);
-        dl.AddRectGradient(Rect(mid, y0, s.max.x, y1), d[1], d[2], Gradient::Horizontal);
+        if (loop <= 0.0f) {
+            dl.AddRectGradient(Rect(s.min.x, y0, mid, y1), d[0], d[1], Gradient::Horizontal);
+            dl.AddRectGradient(Rect(mid, y0, s.max.x, y1), d[1], d[2], Gradient::Horizontal);
+            return;
+        }
+        // The pattern's keys every half width: Start, Mid, End, Mid, (Start again). Draw one gradient per key interval
+        // that the stripe's window covers.
+        const Color keys[5] = {d[0], d[1], d[2], d[1], d[0]};
+        auto colorAt = [&](float u) {
+            const float k = std::min(u / half, 3.999f);
+            const int i = int(k);
+            return LerpColor(keys[i], keys[i + 1], k - float(i));
+        };
+        float u = std::fmod(start, period), x = s.min.x;
+        while (x < s.max.x) {
+            const float keyEnd = (std::floor(u / half) + 1.0f) * half;  // the next key
+            const float len = std::min(std::min(keyEnd, period) - u, s.max.x - x);
+            const float uEnd = u + len;
+            dl.AddRectGradient(Rect(x, y0, x + len, y1), colorAt(u), uEnd >= period ? keys[4] : colorAt(uEnd),
+                               Gradient::Horizontal);
+            x += len;
+            u = uEnd >= period ? 0.0f : uEnd;
+        }
     };
     if (h > 1.0f) {
         row(s.min.y, s.max.y - 1.0f, 0.0f);
@@ -338,6 +365,12 @@ void Storage::SetFloat(ID key, float value) {
     SetInt(key, bits);
 }
 
+int* Storage::Find(ID key) {
+    const auto it = std::lower_bound(m_pairs.begin(), m_pairs.end(), key,
+                                     [](const Pair& p, ID k) { return p.key < k; });
+    return (it != m_pairs.end() && it->key == key) ? &it->value : nullptr;
+}
+
 bool IsMouseValid(Vec2 pos) { return pos.x > -1e29f && pos.y > -1e29f; }
 
 ID ChromeId(const Window* window, ChromePart part) {
@@ -382,8 +415,54 @@ bool IsPopupOpenId(const UiState& g, ID id) {
     return g.openPopups.size() > level && g.openPopups[level].popupId == id;
 }
 
+ClosingPopup* FindClosingPopup(UiState& g, ID id) {
+    for (ClosingPopup& c : g.closingPopups) {
+        if (c.popupId == id) return &c;
+    }
+    return nullptr;
+}
+
+bool BeginClosingPopup(Ui& ui, UiState& g, ID id, uint32_t flags) {
+    ClosingPopup* c = FindClosingPopup(g, id);
+    if (!c) {
+        g.nextWindow.Clear();
+        return false;
+    }
+    c->lastFrame = g.frameCount;
+    g.nextWindow.closing = true;
+    flags |= kWindowPopup | WindowFlags::NoTitleBar | WindowFlags::NoMove | WindowFlags::NoResize | WindowFlags::NoInputs;
+    if (!g.nextWindow.hasSize) flags |= WindowFlags::AlwaysAutoResize;
+    char name[32];
+    std::snprintf(name, sizeof(name), DZ_STR("##Popup_%08X"), id);  // the same window it was while open
+    PopupData popup;
+    popup.popupId = id;
+    g.beginPopupStack.push_back(popup);
+    const bool visible = ui.Begin(name, nullptr, flags);
+    Window* w = g.current;
+    if (!visible || w->unroll <= 0.0f) {
+        // Rolled up: gone.
+        ui.End();
+        g.beginPopupStack.pop_back();
+        g.closingPopups.erase(g.closingPopups.begin() + (c - g.closingPopups.data()));
+        return false;
+    }
+    // Shown, not used: its contents take no input and draw at full opacity.
+    w->closing = true;
+    w->savedDisabledAlpha = g.style.disabledAlpha;
+    g.style.disabledAlpha = 1.0f;
+    ui.BeginDisabled();
+    return true;
+}
+
 void OpenPopupEx(UiState& g, ID id) {
     const size_t level = g.beginPopupStack.size();
+    // Reopened while rolling up: it unrolls again from where it got to.
+    for (size_t i = 0; i < g.closingPopups.size(); ++i) {
+        if (g.closingPopups[i].popupId == id) {
+            g.closingPopups.erase(g.closingPopups.begin() + ptrdiff_t(i));
+            break;
+        }
+    }
     if (g.openPopups.size() > level && g.openPopups[level].popupId == id) {
         g.openPopups.resize(level + 1);  // already open: just close anything stacked on top of it
         return;
@@ -425,6 +504,14 @@ bool BeginPopupEx(Ui& ui, UiState& g, ID id, uint32_t flags) {
 
 void ClosePopupToLevel(UiState& g, size_t level) {
     if (level >= g.openPopups.size()) return;
+    // Popups opened from a widget roll back up while their widget keeps submitting them (BeginClosingPopup), when they
+    // were drawn with a dropdownTime.
+    for (size_t i = level; i < g.openPopups.size(); ++i) {
+        const PopupData& p = g.openPopups[i];
+        Window* w = p.window;
+        if (!w || !w->anchored || w->unrollTime <= 0.0f || !w->active || FindClosingPopup(g, p.popupId)) continue;
+        g.closingPopups.push_back({p.popupId, w, g.frameCount});
+    }
     // Hand focus back to whatever was below the closed popups.
     if (g.focusedWindow && (g.focusedWindow->flags & kWindowPopup)) {
         g.focusedWindow = level > 0 ? g.openPopups[level - 1].window : nullptr;
@@ -569,6 +656,51 @@ float AnimateTo(UiState& g, ID key, float target, float duration) {
     return value;
 }
 
+float ItemAnimSlow(UiState& g, ID id, AnimSalt salt, bool on, float duration, bool fromTarget) {
+    const float target = on ? 1.0f : 0.0f;
+    if (duration <= 0.0f || id == 0) return target;
+    const uint32_t s = salt;
+    const ID key = HashData(&s, sizeof(s), id);
+    int* slot = g.animations.Find(key);
+    float value = 0.0f;
+    if (slot) {
+        std::memcpy(&value, slot, sizeof(value));
+        if (value == target) return target;
+    } else if (fromTarget || !on) {
+        // Nothing to ease yet. Items that are off and have never been on (most of them, most of the time) store nothing.
+        if (fromTarget) g.animations.SetFloat(key, target);
+        return target;
+    }
+    const float step = g.input.deltaTime / duration;
+    value = value < target ? std::min(value + step, target) : std::max(value - step, target);
+    if (slot) std::memcpy(slot, &value, sizeof(value));
+    else g.animations.SetFloat(key, value);
+    return value;
+}
+
+float ItemAnimValueSlow(UiState& g, ID id, AnimSalt salt, float target, float duration, bool instant) {
+    if (duration <= 0.0f || id == 0) return target;
+    const uint32_t s = salt;
+    const ID key = HashData(&s, sizeof(s), id);
+    int* slot = g.animations.Find(key);
+    if (!slot) {
+        g.animations.SetFloat(key, target);
+        return target;
+    }
+    float value;
+    std::memcpy(&value, slot, sizeof(value));
+    if (value == target) return target;
+    if (instant) {
+        value = target;
+    } else {
+        // Exponential ease-out: most of the way in `duration`, then settles.
+        value += (target - value) * (1.0f - std::exp(-4.0f * g.input.deltaTime / duration));
+        if (std::fabs(target - value) < 0.0005f) value = target;
+    }
+    std::memcpy(slot, &value, sizeof(value));
+    return value;
+}
+
 bool IsKeyPressedImpl(const UiState& g, Key key, bool repeat) {
     const float t = g.keysDownDuration[size_t(key)];
     if (t == 0.0f) return true;
@@ -648,65 +780,70 @@ void RenderGlow(UiState& g, const Rect& r, float rounding, float strength) {
     g.current->dl->AddShadow(r, StyleColor(g, UiColor::Glow, strength), size, rounding, {}, true);
 }
 
-void RenderFieldFrame(UiState& g, const Rect& r, bool hovered, bool active) {
+void RenderFieldFrame(UiState& g, const Rect& r, float hover, float active) {
     const UiStyle& s = g.style;
     DrawList& dl = *g.current->dl;
-    const UiColor bg = active ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
+    const Color bg = StateColor(s.colors[size_t(UiColor::FrameBg)], s.colors[size_t(UiColor::FrameBgHovered)],
+                                s.colors[size_t(UiColor::FrameBgActive)], hover, active);  // unfaded (g.alpha below)
     switch (s.frameShape) {
     case FrameShape::Outline: {
-        if (active) RenderGlow(g, r, s.frameRounding, 0.6f);
+        if (active > 0.0f) RenderGlow(g, r, s.frameRounding, 0.6f * active);
         RectStyle style;
-        SetShadedFill(g, style, StyleColor(g, bg, 0.6f));
+        SetShadedFill(g, style, ScaleAlpha(bg, g.alpha * 0.6f));
         style.radii = s.frameRounding;
         style.borderWidth = std::max(s.frameBorderSize, 1.0f);
         const Color border = StyleColor(g, UiColor::Border), accent = StyleColor(g, UiColor::CheckMark);
-        style.borderColor = active ? accent : hovered ? LerpColor(border, accent, 0.6f) : border;
+        style.borderColor = StateColor(border, LerpColor(border, accent, 0.6f), accent, hover, active);
         dl.AddRectEx(r, style);
         break;
     }
     case FrameShape::Underline: {
-        if (hovered || active) {
-            dl.AddRectFilled(r, StyleColor(g, UiColor::FrameBgHovered, active ? 0.55f : 0.35f),
+        const float fill = std::max(hover * 0.35f, active * 0.55f);
+        if (fill > 0.0f) {
+            dl.AddRectFilled(r, StyleColor(g, UiColor::FrameBgHovered, fill),
                              CornerRadii(s.frameRounding, s.frameRounding, 0.0f, 0.0f));
         }
-        const float thickness = active ? 2.0f : 1.0f;
+        const float thickness = active > 0.5f ? 2.0f : 1.0f;
         const Rect line(r.min.x, r.max.y - thickness, r.max.x, r.max.y);
-        if (active) RenderGlow(g, line, 0.0f, 0.7f);
-        dl.AddRectFilled(line, active    ? StyleColor(g, UiColor::CheckMark)
-                               : hovered ? StyleColor(g, UiColor::Text, 0.7f)
-                                         : StyleColor(g, UiColor::TextDisabled, 0.8f));
+        if (active > 0.0f) RenderGlow(g, line, 0.0f, 0.7f * active);
+        dl.AddRectFilled(line, StateColor(StyleColor(g, UiColor::TextDisabled, 0.8f), StyleColor(g, UiColor::Text, 0.7f),
+                                          StyleColor(g, UiColor::CheckMark), hover, active));
         break;
     }
     default:
-        RenderFrame(g, r, StyleColor(g, bg), true, s.frameRounding);
+        RenderFrame(g, r, ScaleAlpha(bg, g.alpha), true, s.frameRounding);
         break;
     }
 }
 
-Rect RenderButtonFrame(UiState& g, const Rect& r, bool hovered, bool held, float rounding) {
+Rect RenderButtonFrame(UiState& g, const Rect& r, float hover, float press, float rounding) {
     const UiStyle& s = g.style;
     DrawList& dl = *g.current->dl;
-    const bool pressed = held && hovered;
     Rect bb = r;
     if (s.hardShadow.x != 0.0f || s.hardShadow.y != 0.0f) {
-        if (pressed) bb = r.Translated(s.hardShadow);  // pushed down into its shadow
-        else dl.AddRectFilled(r.Translated(s.hardShadow), StyleColor(g, UiColor::WindowShadow), rounding);
+        // Pushed down into its shadow (sinking into it while the press eases in).
+        if (press >= 1.0f) {
+            bb = r.Translated(s.hardShadow);
+        } else {
+            dl.AddRectFilled(r.Translated(s.hardShadow), StyleColor(g, UiColor::WindowShadow), rounding);
+            if (press > 0.0f) bb = r.Translated(Vec2(std::floor(s.hardShadow.x * press), std::floor(s.hardShadow.y * press)));
+        }
     }
     if (s.buttonShape == ButtonShape::Outline) {
-        if (hovered) RenderGlow(g, bb, rounding, pressed ? 1.0f : 0.5f);
+        if (hover > 0.0f) RenderGlow(g, bb, rounding, hover * (0.5f + 0.5f * press));
         RectStyle style;
-        SetShadedFill(g, style, StyleColor(g, pressed ? UiColor::HeaderActive : hovered ? UiColor::HeaderHovered
-                                                                                         : UiColor::Header, 0.5f));
+        SetShadedFill(g, style, ScaleAlpha(StateColor(s.colors[size_t(UiColor::Header)], s.colors[size_t(UiColor::HeaderHovered)],
+                                                      s.colors[size_t(UiColor::HeaderActive)], hover, press), g.alpha * 0.5f));
         style.radii = rounding;
         style.borderWidth = std::max(s.frameBorderSize, 1.0f);
         const Color accent = StyleColor(g, UiColor::CheckMark);
-        style.borderColor = hovered ? accent : LerpColor(StyleColor(g, UiColor::Border), accent, 0.45f);
+        style.borderColor = LerpColor(LerpColor(StyleColor(g, UiColor::Border), accent, 0.45f), accent, hover);
         dl.AddRectEx(bb, style);
         RenderBevel(g, bb, rounding, style.borderWidth);
     } else {
-        if (hovered) RenderGlow(g, bb, rounding, pressed ? 0.8f : 0.4f);
-        const UiColor color = pressed ? UiColor::ButtonActive : hovered ? UiColor::ButtonHovered : UiColor::Button;
-        RenderFrame(g, bb, StyleColor(g, color), true, rounding);
+        if (hover > 0.0f) RenderGlow(g, bb, rounding, hover * (0.4f + 0.4f * press));
+        RenderFrame(g, bb, StateColor(StyleColor(g, UiColor::Button), StyleColor(g, UiColor::ButtonHovered),
+                                      StyleColor(g, UiColor::ButtonActive), hover, press), true, rounding);
     }
     return bb;
 }
@@ -727,20 +864,21 @@ Color KnobColor(const UiState& g, Color flat) {
     return ScaleAlpha(LerpColor(colors::White, g.style.colors[size_t(UiColor::Text)], 0.06f), g.alpha);
 }
 
-void RenderCheckBox(UiState& g, const Rect& r, bool hovered, bool held, bool round) {
+void RenderCheckBox(UiState& g, const Rect& r, float hover, float held, bool round) {
     const UiStyle& s = g.style;
     DrawList& dl = *g.current->dl;
-    const UiColor bg = held ? UiColor::FrameBgActive : hovered ? UiColor::FrameBgHovered : UiColor::FrameBg;
+    const Color bg = StateColor(s.colors[size_t(UiColor::FrameBg)], s.colors[size_t(UiColor::FrameBgHovered)],
+                                s.colors[size_t(UiColor::FrameBgActive)], hover, held);  // unfaded
     const float radius = (r.Width() - 1.0f) * 0.5f;
     if (s.frameShape == FrameShape::Filled) {
-        if (round) dl.AddCircleFilled(r.Center(), radius, StyleColor(g, bg));
-        else RenderFrame(g, r, StyleColor(g, bg), true, s.frameRounding);
+        if (round) dl.AddCircleFilled(r.Center(), radius, ScaleAlpha(bg, g.alpha));
+        else RenderFrame(g, r, ScaleAlpha(bg, g.alpha), true, s.frameRounding);
         return;
     }
     // Outlined: a faint fill inside a ring that takes the accent color under the mouse.
     const float width = std::max(s.frameBorderSize, s.frameShape == FrameShape::Underline ? 1.5f : 1.0f);
-    const Color fill = StyleColor(g, bg, s.frameShape == FrameShape::Underline ? 0.0f : 0.6f);
-    const Color border = hovered ? StyleColor(g, UiColor::CheckMark) : StyleColor(g, UiColor::TextDisabled, 0.9f);
+    const Color fill = ScaleAlpha(bg, g.alpha * (s.frameShape == FrameShape::Underline ? 0.0f : 0.6f));
+    const Color border = LerpColor(StyleColor(g, UiColor::TextDisabled, 0.9f), StyleColor(g, UiColor::CheckMark), hover);
     if (round) {
         if (ColorAlpha(fill)) dl.AddCircleFilled(r.Center(), radius, fill);
         dl.AddCircle(r.Center(), radius, border, width);
@@ -818,6 +956,15 @@ void RenderArrow(UiState& g, Vec2 c, float size, int dir, Color color) {
     case 2: dl.AddTriangleFilled({c.x + r * 0.6f, c.y - r}, {c.x - r * 0.8f, c.y}, {c.x + r * 0.6f, c.y + r}, color); break;
     default: dl.AddTriangleFilled({c.x - r, c.y + r * 0.6f}, {c.x + r, c.y + r * 0.6f}, {c.x, c.y - r * 0.8f}, color); break;
     }
+}
+
+void RenderArrowTurned(UiState& g, Vec2 c, float size, float turn, Color color) {
+    // RenderArrow's right-pointing triangle, turned.
+    const float r = size * 0.5f;
+    const float a = turn * 6.28318531f;
+    const float cs = std::cos(a), sn = std::sin(a);
+    auto point = [&](float x, float y) { return Vec2(c.x + x * cs - y * sn, c.y + x * sn + y * cs); };
+    g.current->dl->AddTriangleFilled(point(-r * 0.6f, -r), point(r * 0.8f, 0.0f), point(-r * 0.6f, r), color);
 }
 
 void RenderCheckMark(UiState& g, Vec2 pos, Color color, float size) {
@@ -1005,6 +1152,10 @@ void Ui::NewFrame() {
     g.hoveredIdPrev = g.hoveredId;
     g.hoveredId = 0;
     g.popupClosedByClick = 0;
+    // Closing popups whose widget stopped submitting them (a tab switched away, say) are gone.
+    for (size_t i = g.closingPopups.size(); i-- > 0;) {
+        if (g.closingPopups[i].lastFrame < g.frameCount - 1) g.closingPopups.erase(g.closingPopups.begin() + ptrdiff_t(i));
+    }
     g.activeIdPrevFrame = g.activeId;
     if (g.movingWindow) {
         if (g.input.mouseDown[0] && g.activeId == MoveId(g.movingWindow)) {
@@ -1099,6 +1250,11 @@ const DrawData& Ui::Render() {
     for (Window* w : g.focusOrder) {
         if (w->active && !w->hidden) g.renderLists.push_back(&w->drawList);
     }
+    // Popups rolling up, under the open ones. Including one closed this frame from inside it (a combo item was
+    // picked): it was drawn open, and goes on showing until it rolls up.
+    for (const ClosingPopup& c : g.closingPopups) {
+        if (c.window && c.window->active && !c.window->hidden) g.renderLists.push_back(&c.window->drawList);
+    }
     for (const PopupData& p : g.openPopups) {
         if (p.window && p.window->active && !p.window->hidden) g.renderLists.push_back(&p.window->drawList);
     }
@@ -1162,14 +1318,15 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     const bool isModal = (flags & kWindowModal) != 0;
     const bool isTooltip = (flags & kWindowTooltip) != 0;
     w->flags = flags;
+    w->flushList = false;  // BeginCombo sets it for its list
     w->appearing = !w->wasActive;
-    // UiStyle::animationTime: popups and tooltips fade in (easing out) over half of it from when they appear, so they
-    // still feel immediate; child regions share their parent's fade. Applied to everything the window draws (g.alpha).
+    // UiStyle::popupTime: popups and tooltips fade in (easing out) from when they appear; child regions share their
+    // parent's fade. Applied to everything the window draws (g.alpha).
     if (w->appearing) w->appearTime = g.time;
     if (parent) {
         w->fade = parent->fade;
-    } else if ((isPopup || isTooltip) && g.style.animationTime > 0.0f) {
-        const float t = Clamp(float((g.time - w->appearTime) / double(g.style.animationTime * 0.5f)), 0.0f, 1.0f);
+    } else if ((isPopup || isTooltip) && g.style.popupTime > 0.0f) {
+        const float t = Clamp(float((g.time - w->appearTime) / double(g.style.popupTime)), 0.0f, 1.0f);
         w->fade = t * (2.0f - t);
     } else {
         w->fade = 1.0f;
@@ -1245,6 +1402,7 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
     if (w->groupBox) w->titleBarHeight = next.groupTitle.empty() ? 0.0f : TextLineHeight(g);  // the title on the border
     w->menuBarHeight = (flags & WindowFlags::MenuBar) ? FrameHeight(g) : 0.0f;
     w->borderSize = (flags & WindowFlags::NoBackground) ? 0.0f
+                  : next.flushList                      ? 1.0f
                   : isChild                             ? (w->childBorder ? (bevel ? 2.0f : 1.0f) : 0.0f)
                   : bevel && !frameChrome               ? 2.0f
                                                         : style.windowBorderSize;
@@ -1431,9 +1589,33 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
             grabY = track.min.y + travel * t;
         }
         grab = Rect(track.min.x + 2.0f, grabY + 2.0f, track.max.x - 2.0f, grabY + grabH - 2.0f);
-        grabColor = StyleColor(g, held ? UiColor::ScrollbarGrabActive
-                                  : hovered ? UiColor::ScrollbarGrabHovered
-                                            : UiColor::ScrollbarGrab);
+        grabColor = ScaleAlpha(StateColor(style.colors[size_t(UiColor::ScrollbarGrab)],
+                                          style.colors[size_t(UiColor::ScrollbarGrabHovered)],
+                                          style.colors[size_t(UiColor::ScrollbarGrabActive)],
+                                          ItemAnim(g, scrollId, kAnimHover, hovered || held, g.style.hoverTime),
+                                          ItemAnim(g, scrollId, kAnimHeld, held, g.style.hoverTime)),
+                               g.alpha);
+    }
+
+    // ---- UiStyle::dropdownTime: a popup opened from a widget (a combo's list, a color picker) unrolls from it, down
+    // (or up, when it opened above it), and once closed rolls back up (BeginClosingPopup); SetNextWindowReveal does the
+    // same for any window. Only what is unrolled is drawn: its frame is drawn that tall and its contents clipped to it
+    // (the window keeps its full size for layout and input).
+    const Rect fullRect = w->outerRect;
+    w->anchored = isPopup && next.hasAnchor;
+    w->closing = false;  // BeginClosingPopup sets it after this Begin
+    if (w->anchored) {
+        const float time = w->unrollTime = style.dropdownTime;
+        if (w->appearing) w->unroll = 0.0f;
+        const float step = time > 0.0f ? g.input.deltaTime / time : 1.0f;
+        w->unroll = Clamp(w->unroll + (next.closing ? -step : step), 0.0f, 1.0f);
+    }
+    const float reveal = std::min(w->anchored ? EaseOut(w->unroll) : 1.0f, next.reveal >= 0.0f ? next.reveal : 1.0f);
+    if (reveal < 1.0f) {
+        const float h = std::floor(w->size.y * reveal);
+        const bool above = w->anchored && w->pos.y + w->size.y <= next.anchor.min.y + 1.0f;  // unrolls upward
+        if (above) w->outerRect.min.y = w->outerRect.max.y - h;
+        else w->outerRect.max.y = w->outerRect.min.y + h;
     }
 
     // ---- Draw the frame
@@ -1466,7 +1648,8 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
         // menu bars inside the border; a collapsed one is just its title bar with the border over it.
         const bool border = background && borderSize > 0.0f;
         const bool bodyWithBorder = background && !w->collapsed;
-        const UiColor bodyColor = (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
+        const UiColor bodyColor = next.flushList                      ? UiColor::FrameBg  // the field's color
+                                : (isPopup || isTooltip) && !isModal ? UiColor::PopupBg
                                 : isChild                            ? UiColor::ChildBg
                                                                      : UiColor::WindowBg;
         if (w->chromeTop > 0.0f) {
@@ -1485,11 +1668,12 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
             float gapMin = 0.0f, gapMax = 0.0f;
             if (w->groupBox && w->titleBarHeight > 0.0f) {
                 const float textX = body.min.x + std::max(w->padding.x, 8.0f);
-                const float textW = TextSize(g, next.groupTitle).x;
+                const Font& titleFont = style.boldFont ? *style.boldFont : *g.font;  // UiStyle::boldFont
+                const float textW = std::ceil(titleFont.MeasureText(next.groupTitle, g.fontSize).x);
                 gapMin = textX - 4.0f;
                 gapMax = textX + textW + 4.0f;
-                RenderTextClipped(g, {textX, w->outerRect.min.y}, next.groupTitle, StyleColor(g, UiColor::Text),
-                                  w->outerRect);
+                dl.AddTextClipped(titleFont, g.fontSize, {textX, w->outerRect.min.y}, StyleColor(g, UiColor::Text),
+                                  next.groupTitle, w->outerRect);
             }
             if (border) RenderOutlineLines(g, dl, body, int(borderSize), gapMin, gapMax);
         } else if (bodyWithBorder) {
@@ -1588,6 +1772,10 @@ bool Ui::Begin(std::string_view name, bool* open, uint32_t flags) {
 
     // ---- Layout for the window's content
     w->clipRect = parent ? w->innerRect.Intersect(parent->clipRect) : w->innerRect;
+    if (w->outerRect.min.y != fullRect.min.y || w->outerRect.max.y != fullRect.max.y) {
+        w->clipRect = w->clipRect.Intersect(w->outerRect);  // unrolling (above)
+        w->outerRect = fullRect;
+    }
     const Vec2 contentMin = w->innerRect.min + w->padding;
     w->contentStartX = std::floor(contentMin.x);
     w->cursorStartPos = {std::floor(contentMin.x), std::floor(contentMin.y - w->scroll.y)};
@@ -1622,6 +1810,25 @@ void Ui::End() {
     DZ_ASSERT(!g.windowStack.empty() && "End() without Begin()");
     Window* w = g.current;
     DZ_ASSERT(w->groupStack.empty() && "a BeginGroup() is missing its EndGroup()");
+    if ((w->flags & kWindowChild) && w->scrollMax.y > 0.0f && g.style.scrollFade > 0.0f && !w->skipItems) {
+        // UiStyle::scrollFade: the contents fade into the region's background at an edge with more beyond it, and a
+        // small arrow in that corner says which way there is more.
+        DrawList& dl = *w->dl;
+        const Rect& r = w->innerRect;
+        const float h = std::min(std::floor(g.style.scrollFade), std::floor(r.Height() * 0.4f));
+        const Color bg = StyleColor(g, UiColor::ChildBg), clear = WithAlpha(bg, 0);
+        const Color arrow = StyleColor(g, UiColor::Text, 0.7f);
+        const float size = std::max(5.0f, std::floor(g.fontSize * 0.45f));
+        const float ax = std::floor(r.max.x - size * 0.5f - 3.0f) + 0.5f;
+        if (w->scroll.y > 0.0f && h > 0.0f) {
+            dl.AddRectGradient(Rect(r.min.x, r.min.y, r.max.x, r.min.y + h), bg, clear, Gradient::Vertical);
+            RenderArrow(g, {ax, std::floor(r.min.y + size * 0.5f + 3.0f) + 0.5f}, size, 3, arrow);
+        }
+        if (w->scroll.y < w->scrollMax.y && h > 0.0f) {
+            dl.AddRectGradient(Rect(r.min.x, r.max.y - h, r.max.x, r.max.y), clear, bg, Gradient::Vertical);
+            RenderArrow(g, {ax, std::floor(r.max.y - size * 0.5f - 3.0f) + 0.5f}, size, 1, arrow);
+        }
+    }
     w->dl->PopClipRect();
     w->contentSize = {std::floor(std::max(0.0f, w->cursorMaxPos.x - w->cursorStartPos.x)),
                       std::floor(std::max(0.0f, w->cursorMaxPos.y - w->cursorStartPos.y))};
@@ -1697,6 +1904,8 @@ void Ui::SetNextWindowSize(Vec2 size, Cond cond) {
     m->nextWindow.size = size;
     m->nextWindow.sizeCond = cond;
 }
+
+void Ui::SetNextWindowReveal(float fraction) { m->nextWindow.reveal = Clamp(fraction, 0.0f, 1.0f); }
 
 void Ui::SetNextWindowCollapsed(bool collapsed, Cond cond) {
     m->nextWindow.hasCollapsed = true;
@@ -2005,6 +2214,10 @@ bool Ui::BeginPopupContextItem(std::string_view id) {
 void Ui::EndPopup() {
     UiState& g = *m;
     DZ_ASSERT(!g.beginPopupStack.empty() && "EndPopup() without BeginPopup()");
+    if (g.current->closing) {
+        EndDisabled();
+        g.style.disabledAlpha = g.current->savedDisabledAlpha;
+    }
     End();
     g.beginPopupStack.pop_back();
 }

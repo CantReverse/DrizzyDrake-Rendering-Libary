@@ -300,7 +300,8 @@ bool InputTextImpl(UiState& g, std::string_view label, std::string_view hint, ch
     // ---- Render
     DrawList& dl = *w->dl;
     const bool showActive = active && !deactivate;
-    RenderFieldFrame(g, frame, hovered, showActive);
+    RenderFieldFrame(g, frame, ItemAnim(g, id, kAnimHover, hovered, g.style.hoverTime),
+                     ItemAnim(g, id, kAnimHeld, showActive, g.style.hoverTime));
     const float textY = frame.min.y + pad.y;
     const Rect clip = Rect(frame.min.x + 1.0f, frame.min.y, frame.max.x - 1.0f, frame.max.y).Intersect(w->clipRect);
     if (showActive) {
@@ -575,7 +576,8 @@ bool InputTextMultilineImpl(UiState& g, std::string_view label, char* buffer, si
     // ---- Render
     DrawList& dl = *w->dl;
     const bool showActive = active && !deactivate;
-    RenderFieldFrame(g, frame, hovered, showActive);
+    RenderFieldFrame(g, frame, ItemAnim(g, id, kAnimHover, hovered, g.style.hoverTime),
+                     ItemAnim(g, id, kAnimHeld, showActive, g.style.hoverTime));
     const std::string& shown = showActive ? s.text : std::string(current);
     const int lineCount = LineCountOf(shown);
 

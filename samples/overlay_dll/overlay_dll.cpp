@@ -188,7 +188,8 @@ void RenderOverlay(IDXGISwapChain* swapChain) {
     g->ui.Input().deltaTime = Clamp(dt, 1.0f / 1000.0f, 0.1f);  // guard against stalls and a bad first delta
     g->ui.NewFrame();
     // Insert fades the menu in and out. Once it has faded out nothing is drawn, so the closed overlay costs nothing.
-    const float fade = g->ui.Animate("##menu_fade", g->menuVisible ? 1.0f : 0.0f, 0.08f);  // ~80 ms, linear
+    // ~80 ms, linear (the DrizMenu demo's Customize > Animation > Menu fade)
+    const float fade = g->ui.Animate("##menu_fade", g->menuVisible ? 1.0f : 0.0f, demo::DrizMenuFadeTime());
     if (fade > 0.0f) {
         g->ui.PushStyleVar(UiStyleVar::Alpha, fade);
         BuildMenu(g->ui);
